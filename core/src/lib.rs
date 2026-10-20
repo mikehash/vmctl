@@ -11,6 +11,7 @@
 pub mod actions;
 pub mod assistant;
 pub mod backend;
+pub mod templates;
 pub mod vmbhyve;
 
 pub use actions::{suggested_action, Action};

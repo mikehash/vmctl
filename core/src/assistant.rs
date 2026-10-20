@@ -82,7 +82,17 @@ fn size_token(s: &str) -> Option<String> {
 ///
 /// `known` is the set of guest names the backend currently knows about; used to
 /// resolve which machine a request targets and to validate targets.
+/// Back-compatible entry point: resolves against the built-in [`crate::templates::KNOWN`]
+/// list. Prefer [`plan_for_with_templates`] when you know what the host really has.
 pub fn plan_for(text: &str, known: &[String]) -> Plan {
+    let fallback: Vec<String> = crate::templates::KNOWN.iter().map(|s| s.to_string()).collect();
+    plan_for_with_templates(text, known, &fallback)
+}
+
+/// Same as [`plan_for`], but the OS is chosen from `templates` — the set the
+/// host actually has installed — so we never propose `-t <os>` for a template
+/// that isn't there (which makes `vm create` fail after the user hits Enter).
+pub fn plan_for_with_templates(text: &str, known: &[String], templates: &[String]) -> Plan {
     let t = text.to_lowercase();
 
     // "create/make/new ... <os> ... N cpu ... M memory"
@@ -91,11 +101,21 @@ pub fn plan_for(text: &str, known: &[String]) -> Plan {
         .any(|w| t.contains(w));
     let is_vm = ["vm", "machine", "box", "guest"].iter().any(|w| t.contains(w));
     if wants_create && is_vm {
-        let os = ["ubuntu", "freebsd", "debian", "windows", "openbsd", "alpine"]
+        // Pick the OS from what the host actually has, falling back to the
+        // first available template so `-t <os>` is always resolvable.
+        let empty = String::new();
+        let os_owned = templates
             .iter()
-            .find(|o| t.contains(**o))
-            .copied()
-            .unwrap_or("freebsd");
+            .find(|o| t.contains(o.as_str()))
+            .cloned()
+            .unwrap_or_else(|| {
+                templates
+                    .iter()
+                    .find(|o| o.as_str() != empty.as_str())
+                    .cloned()
+                    .unwrap_or_else(|| "freebsd".to_string())
+            });
+        let os = os_owned.as_str();
         let cpu = regex_first_num(&t, &["cpu", "cpus", "core", "cores", "vcpu"]).unwrap_or(1);
         let mem = regex_first_size(&t).unwrap_or_else(|| "1G".to_string());
         let name = unique_name(os, known);
