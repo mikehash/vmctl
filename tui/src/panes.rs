@@ -19,16 +19,18 @@ pub enum Pane {
     Config,
     Console,
     Log,
+    Deploy,
 }
 
 impl Pane {
-    pub const ALL: [Pane; 6] = [
+    pub const ALL: [Pane; 7] = [
         Pane::Guests,
         Pane::Assistant,
         Pane::Wizard,
         Pane::Config,
         Pane::Console,
         Pane::Log,
+        Pane::Deploy,
     ];
 
     pub fn title(&self) -> &'static str {
@@ -39,10 +41,11 @@ impl Pane {
             Pane::Config => "Config",
             Pane::Console => "Console",
             Pane::Log => "Activity",
+            Pane::Deploy => "Deploy",
         }
     }
 
-    /// 1-6 hotkey to jump straight to a pane.
+    /// 1-7 hotkey to jump straight to a pane.
     pub fn from_digit(d: char) -> Option<Pane> {
         match d {
             '1' => Some(Pane::Guests),
@@ -51,6 +54,7 @@ impl Pane {
             '4' => Some(Pane::Config),
             '5' => Some(Pane::Console),
             '6' => Some(Pane::Log),
+            '7' => Some(Pane::Deploy),
             _ => None,
         }
     }
@@ -495,6 +499,62 @@ pub fn render_config(f: &mut ratatui::Frame, area: Rect, guest: &str, cpu: &str,
     f.render_widget(cfg, area);
 }
 
+/// The Deploy pane — the "launch" tab. It shows the exact commands that will
+/// bring a guest up (create + install for a new one, or start + console for an
+/// existing one) and runs them on Enter. This is the one-button path from
+/// "I have an ISO / a guest" to "it's booting".
+pub fn render_deploy(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    guest: &str,
+    has_guest: bool,
+    running: bool,
+    iso: &str,
+) {
+    let title = format!("Deploy / Launch — {guest}");
+    let mut lines: Vec<Line> = vec![
+        Line::from(Span::styled(
+            "One-button launch. Enter runs the steps below in order.",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    if !has_guest {
+        lines.push(Line::from(Span::styled(
+            "No guest selected — pick one in Guests (pane 1), or build one in the wizard (pane 3).",
+            Style::default().fg(Color::Yellow),
+        )));
+    } else if running {
+        lines.push(Line::from(format!("  {guest} is already running.")));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("Enter attaches the console:", Style::default().fg(Color::Cyan))));
+        lines.push(Line::from(Span::styled(
+            format!("   vm console {guest}"),
+            Style::default().fg(Color::Green),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled("Enter boots it:", Style::default().fg(Color::Cyan))));
+        lines.push(Line::from(Span::styled(
+            format!("   vm start {guest}"),
+            Style::default().fg(Color::Green),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled("Then attach the console:", Style::default().fg(Color::Cyan))));
+        lines.push(Line::from(Span::styled(
+            format!("   vm console {guest}"),
+            Style::default().fg(Color::Green),
+        )));
+    }
+    if !iso.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(format!("  install media: {iso}")));
+    }
+    let deploy = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .alignment(Alignment::Left);
+    f.render_widget(deploy, area);
+}
+
 /// The assistant pane: a plain-English prompt that turns intent into a
 /// validated plan (via `assistant::plan_for`) and runs it step by step. This
 /// is the "ease of use like VirtualBox" core — you type what you want, review
@@ -704,7 +764,16 @@ mod tests {
         assert_eq!(Pane::from_digit('1'), Some(Pane::Guests));
         assert_eq!(Pane::from_digit('2'), Some(Pane::Assistant));
         assert_eq!(Pane::from_digit('6'), Some(Pane::Log));
+        assert_eq!(Pane::from_digit('7'), Some(Pane::Deploy));
         assert_eq!(Pane::from_digit('9'), None);
+    }
+
+    #[test]
+    fn deploy_is_last_tab_and_reachable() {
+        // The Deploy pane is the last tab in the bar and maps to hotkey 7.
+        assert_eq!(*Pane::ALL.last().unwrap(), Pane::Deploy);
+        assert_eq!(Pane::Deploy.title(), "Deploy");
+        assert_eq!(Pane::ALL.len(), 7);
     }
 
     #[test]

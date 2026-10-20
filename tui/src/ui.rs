@@ -8,7 +8,7 @@
 //!   │ status line: last outcome / error                      │
 //!   └────────────────────────────────────────────────────────┘
 //!
-//! Keys: ↑/↓ or j/k move · Enter runs the highlighted action · 1-6 pick an
+//! Keys: ↑/↓ or j/k move · Enter runs the highlighted action · 1-7 pick an
 //! action · r refresh · q quit.
 
 use std::io::{self, Stdout};
@@ -52,7 +52,7 @@ impl App {
             rows: Vec::new(),
             state: ListState::default(),
             action_idx: 0,
-            status: "1-5 pane · ↑↓ select · Enter run · q quit".into(),
+            status: "1-7 pane · ↑↓ select · Enter run · q quit".into(),
             should_quit: false,
             pane: Pane::Guests,
             wizard: Wizard::default(),
@@ -173,7 +173,7 @@ impl App {
                 }
                 return;
             }
-            KeyCode::Char(c @ '1'..='6') => {
+            KeyCode::Char(c @ '1'..='7') => {
                 if let Some(p) = Pane::from_digit(c) {
                     self.pane = p;
                 }
@@ -243,6 +243,10 @@ impl App {
                     _ => {}
                 }
             }
+            Pane::Deploy => match code {
+                KeyCode::Enter => self.run_deploy(),
+                _ => {}
+            },
             Pane::Config | Pane::Console | Pane::Log => {
                 // Read-only panes: navigation handled by globals.
             }
@@ -324,6 +328,35 @@ impl App {
         }
     }
 
+    /// Deploy pane: one-button launch. Boots the selected guest (or, if it's
+    /// already running, hands off to the console command). Mirrors the exact
+    /// `vm(8)` commands shown in the pane so there are no surprises.
+    fn run_deploy(&mut self) {
+        let Some(row) = self.selected() else {
+            self.status = "deploy: no guest selected".into();
+            return;
+        };
+        let name = row.name.clone();
+        if row.is_running() {
+            self.status = format!("'{name}' is running — attach with: vm console {name}");
+            self.log.push(format!("vm console {name}"), 0, None);
+            return;
+        }
+        let cmd = format!("vm start {name}");
+        match self.vm.run(&["start", &name]) {
+            Ok(msg) => {
+                self.log.push(cmd, 0, None);
+                self.status = format!("{msg} — attach with: vm console {name}");
+            }
+            Err(e) => {
+                let m = format!("{e}");
+                self.log.push(cmd, 1, Some(m.clone()));
+                self.status = format!("error: {m}");
+            }
+        }
+        self.refresh();
+    }
+
     fn draw(&mut self, f: &mut Frame) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -362,6 +395,14 @@ impl App {
                 panes::render_console(f, chunks[1], &name, running);
             }
             Pane::Log => self.log.render(f, chunks[1]),
+            Pane::Deploy => {
+                let (name, has_guest, running) = self
+                    .selected()
+                    .map(|r| (r.name.clone(), true, r.is_running()))
+                    .unwrap_or_else(|| ("(none)".into(), false, false));
+                let iso = self.wizard.iso();
+                panes::render_deploy(f, chunks[1], &name, has_guest, running, &iso);
+            }
         }
 
         // Action bar (context-sensitive).
@@ -393,8 +434,13 @@ impl App {
                     .block(Block::default().borders(Borders::ALL).title("Wizard"));
                 f.render_widget(hint, chunks[2]);
             }
+            Pane::Deploy => {
+                let hint = Paragraph::new("Enter launch \u{00b7} \u{2191}\u{2193} pick guest in pane 1 \u{00b7} Esc back")
+                    .block(Block::default().borders(Borders::ALL).title("Deploy"));
+                f.render_widget(hint, chunks[2]);
+            }
             _ => {
-                let hint = Paragraph::new("1-5 switch pane \u{00b7} Esc back to guests \u{00b7} q quit")
+                let hint = Paragraph::new("1-7 switch pane \u{00b7} Esc back to guests \u{00b7} q quit")
                     .block(Block::default().borders(Borders::ALL).title("Navigate"));
                 f.render_widget(hint, chunks[2]);
             }
