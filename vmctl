@@ -1,0 +1,42 @@
+#!/bin/sh
+# vmctl — one-command entry point for building, testing, and running the apps.
+# This is a thin wrapper over the scripts/ directory so you don't have to
+# remember paths. Run with no args for usage.
+#
+# Usage:
+#   ./vmctl build [tui|desktop|core|all] [--debug]
+#   ./vmctl test  [core|tui|desktop|all]
+#   ./vmctl run-tui   [args]
+#   ./vmctl run-desktop [args]
+#   ./vmctl install [--prefix DIR] [--uninstall]
+
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+case "${1:-}" in
+  build)      shift; exec "$ROOT/scripts/build.sh" "$@" ;;
+  test)       shift; exec "$ROOT/scripts/test.sh" "$@" ;;
+  run-tui|tui)      shift; exec "$ROOT/scripts/run-tui.sh" "$@" ;;
+  run-desktop|desktop) shift; exec "$ROOT/scripts/run-desktop.sh" "$@" ;;
+  install)    shift; exec "$ROOT/scripts/install.sh" "$@" ;;
+  -h|--help|"")
+    cat <<'EOF'
+vmctl — friendly vm-bhyve front-ends (TUI + Desktop) over one shared core
+
+  ./vmctl build [tui|desktop|core|all] [--debug]   build the apps
+  ./vmctl test  [core|tui|desktop|all]             run the test suite
+  ./vmctl run-tui [args]                           launch the terminal app
+  ./vmctl run-desktop [args]                       launch the desktop app
+  ./vmctl install [--prefix DIR] [--uninstall]     install onto PATH
+
+Examples:
+  ./vmctl build              # build both apps (release)
+  ./vmctl test               # run all tests
+  ./vmctl run-tui            # open the TUI (as root)
+  ./vmctl run-desktop        # open the desktop app (needs a display)
+EOF
+    ;;
+  *)
+    echo "vmctl: unknown command '${1:-}' (try --help)" >&2
+    exit 2 ;;
+esac
