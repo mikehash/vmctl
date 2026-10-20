@@ -41,6 +41,7 @@ pub struct VmSummary {
 
 impl VmSummary {
     /// True when the guest is running (vm-bhyve reports `Running (pid)`).
+    #[allow(dead_code)]
     pub fn is_running(&self) -> bool {
         self.state.starts_with("Running")
     }
@@ -61,6 +62,7 @@ impl Default for Vm {
 }
 
 impl Vm {
+    #[allow(dead_code)]
     pub fn new(bin: impl Into<String>) -> Self {
         Self { bin: bin.into() }
     }

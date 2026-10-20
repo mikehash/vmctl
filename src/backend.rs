@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::vmbhyve::{parse_list, Vm, VmError, VmSummary};
+use crate::vmbhyve::{Vm, VmError, VmSummary};
 
 /// Result of running one `vm(8)` command. Mirrors a real process exit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,12 +23,14 @@ pub struct ExecResult {
 }
 
 impl ExecResult {
+    #[allow(dead_code)]
     pub fn ok(cmd: impl Into<String>) -> Self {
         Self { cmd: cmd.into(), code: 0, stdout: String::new(), stderr: String::new() }
     }
     pub fn fail(cmd: impl Into<String>, code: i32, stderr: impl Into<String>) -> Self {
         Self { cmd: cmd.into(), code, stdout: String::new(), stderr: stderr.into() }
     }
+    #[allow(dead_code)]
     pub fn success(&self) -> bool {
         self.code == 0
     }
@@ -56,6 +58,7 @@ impl Default for VmBackend {
 }
 
 impl VmBackend {
+    #[allow(dead_code)]
     pub fn new(vm: Vm, sudo: bool) -> Self {
         Self { vm, sudo }
     }
@@ -102,6 +105,7 @@ pub struct MockBackend {
 }
 
 impl MockBackend {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -120,6 +124,7 @@ impl MockBackend {
     }
 
     /// Seed a guest in a given state.
+    #[allow(dead_code)]
     pub fn with(mut self, name: &str, state: &str) -> Self {
         self.vms.insert(name.to_string(), Self::row(name, state));
         self

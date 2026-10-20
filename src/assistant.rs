@@ -56,6 +56,7 @@ pub struct RunReport {
 }
 
 impl RunReport {
+    #[allow(dead_code)]
     pub fn success(&self) -> bool {
         self.failed_at.is_none()
     }

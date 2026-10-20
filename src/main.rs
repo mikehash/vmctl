@@ -14,7 +14,35 @@ use backend::Backend;
 
 use vmbhyve::Vm;
 
+const USAGE: &str = "\
+vmctl-tui — a friendly TUI for vm-bhyve (VirtualBox-style)
+
+USAGE:
+  vmctl-tui                 Launch the interactive TUI (needs root for vm(8))
+  vmctl-tui --list          Print the guest list and exit (scripting/smoke test)
+  vmctl-tui --plan \"<text>\" Show + run a plain-English plan against live vm(8)
+  vmctl-tui --help          Show this help
+
+TUI PANES (hotkeys 1-6):
+  1 Guests      VM list + action bar (Start/Stop/Restart/Suspend/Console/Info)
+  2 Ask vmctl   Plain-English assistant: type a request, review the plan, run it
+  3 New machine Creation wizard: template -> cpu/mem/disk -> vm create + install
+  4 Config      Guest config surface + the exact edit command
+  5 Console     The `vm console` command to run in a real shell
+  6 Activity    Every real vm(8) command this session + its exit code
+
+KEYS: 1-6 pane · ↑↓/jk move · ←→ pick action/template · Enter run · r refresh ·
+      Esc back · q quit
+
+Run as root (vm-bhyve requires it):  doas vmctl-tui";
+
 fn main() {
+    // `--help` / `-h` prints usage.
+    if std::env::args().any(|a| a == "--help" || a == "-h") {
+        println!("{USAGE}");
+        return;
+    }
+
     // `--list` keeps a quick non-TUI path for scripting / smoke tests.
     if std::env::args().any(|a| a == "--list") {
         let vm = Vm::default();

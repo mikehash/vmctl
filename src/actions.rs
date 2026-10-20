@@ -81,6 +81,7 @@ pub fn run_action(vm: &Vm, action: Action, name: &str) -> Result<String, VmError
 
 /// Convenience: pick the most likely action for a guest's current state.
 /// Powers the assistant's default suggestion ("it's stopped → Start").
+#[allow(dead_code)]
 pub fn suggested_action(row: &VmSummary) -> Action {
     if row.is_running() {
         Action::Stop
