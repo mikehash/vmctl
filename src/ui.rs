@@ -20,13 +20,14 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::{Frame, Terminal};
 
 use crate::actions::{self, Action};
+use crate::panes::{self, LogTail, Pane, Wizard};
 use crate::vmbhyve::{Vm, VmSummary};
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
@@ -38,6 +39,9 @@ pub struct App {
     action_idx: usize,
     status: String,
     should_quit: bool,
+    pane: Pane,
+    wizard: Wizard,
+    log: LogTail,
 }
 
 impl App {
@@ -47,8 +51,11 @@ impl App {
             rows: Vec::new(),
             state: ListState::default(),
             action_idx: 0,
-            status: "r refresh · ↑↓ select · 1-6 action · Enter run · q quit".into(),
+            status: "1-5 pane · ↑↓ select · Enter run · q quit".into(),
             should_quit: false,
+            pane: Pane::Guests,
+            wizard: Wizard::default(),
+            log: LogTail::default(),
         };
         app.refresh();
         if !app.rows.is_empty() {
@@ -93,9 +100,17 @@ impl App {
             return;
         };
         let name = row.name.clone();
+        let cmd = format!("vm {}", action.argv(&name).join(" "));
         match actions::run_action(&self.vm, action, &name) {
-            Ok(msg) => self.status = msg,
-            Err(e) => self.status = format!("error: {e}"),
+            Ok(msg) => {
+                self.log.push(cmd, 0, None);
+                self.status = msg;
+            }
+            Err(e) => {
+                let m = format!("{e}");
+                self.log.push(cmd, 1, Some(m.clone()));
+                self.status = format!("error: {m}");
+            }
         }
         // State likely changed (start/stop/etc) — refresh the list.
         if !action.is_interactive() {
@@ -104,16 +119,100 @@ impl App {
     }
 
     fn on_key(&mut self, code: KeyCode) {
+        // Global keys.
         match code {
-            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
-            KeyCode::Down | KeyCode::Char('j') => self.move_sel(1),
-            KeyCode::Up | KeyCode::Char('k') => self.move_sel(-1),
-            KeyCode::Char('r') => self.refresh(),
-            KeyCode::Enter => self.run_selected_action(),
-            KeyCode::Char(c @ '1'..='6') => {
-                self.action_idx = (c as u8 - b'1') as usize;
+            KeyCode::Char('q') => {
+                self.should_quit = true;
+                return;
+            }
+            KeyCode::Esc => {
+                // Esc backs out to the Guests pane, or quits from it.
+                if self.pane == Pane::Guests {
+                    self.should_quit = true;
+                } else {
+                    self.pane = Pane::Guests;
+                }
+                return;
+            }
+            KeyCode::Char(c @ '1'..='5') => {
+                if let Some(p) = Pane::from_digit(c) {
+                    self.pane = p;
+                }
+                return;
             }
             _ => {}
+        }
+
+        // Pane-local keys.
+        match self.pane {
+            Pane::Guests => match code {
+                KeyCode::Down | KeyCode::Char('j') => self.move_sel(1),
+                KeyCode::Up | KeyCode::Char('k') => self.move_sel(-1),
+                KeyCode::Char('r') => self.refresh(),
+                KeyCode::Enter => self.run_selected_action(),
+                KeyCode::Char(c @ '6') => {
+                    self.action_idx = (c as u8 - b'1') as usize;
+                }
+                KeyCode::Left | KeyCode::Char('h') => {
+                    self.action_idx = (self.action_idx + Action::ALL.len() - 1) % Action::ALL.len()
+                }
+                KeyCode::Right | KeyCode::Char('l') => {
+                    self.action_idx = (self.action_idx + 1) % Action::ALL.len()
+                }
+                _ => {}
+            },
+            Pane::Wizard => match code {
+                KeyCode::Down | KeyCode::Tab => self.wizard.next_field(),
+                KeyCode::Up | KeyCode::BackTab => self.wizard.prev_field(),
+                KeyCode::Left => self.wizard.cycle_template(-1),
+                KeyCode::Right => self.wizard.cycle_template(1),
+                KeyCode::Backspace => self.wizard.backspace(),
+                KeyCode::Char(c) => self.wizard.type_char(c),
+                KeyCode::Enter => self.run_wizard(),
+                _ => {}
+            },
+            Pane::Config | Pane::Console | Pane::Log => {
+                // Read-only panes: navigation handled by globals.
+            }
+        }
+    }
+
+    /// Run the wizard's `vm create` + `vm install` against the live backend.
+    fn run_wizard(&mut self) {
+        if !self.wizard.ready() {
+            self.status = "wizard: fill in name, cpus, memory, disk".into();
+            return;
+        }
+        let create: Vec<String> = self.wizard.create_argv();
+        let create_refs: Vec<&str> = create.iter().map(|s| s.as_str()).collect();
+        let cmd = format!("vm {}", create.join(" "));
+        match self.vm.run(&create_refs) {
+            Ok(msg) => {
+                self.log.push(cmd, 0, None);
+                self.status = msg;
+                // Then boot the installer.
+                let install: Vec<String> = self.wizard.install_argv();
+                let install_refs: Vec<&str> = install.iter().map(|s| s.as_str()).collect();
+                let icmd = format!("vm {}", install.join(" "));
+                match self.vm.run(&install_refs) {
+                    Ok(m2) => {
+                        self.log.push(icmd, 0, None);
+                        self.status = format!("{} · {}", self.status, m2);
+                    }
+                    Err(e) => {
+                        let m = format!("{e}");
+                        self.log.push(icmd, 1, Some(m.clone()));
+                        self.status = format!("created, but install failed: {m}");
+                    }
+                }
+                self.refresh();
+                self.pane = Pane::Guests;
+            }
+            Err(e) => {
+                let m = format!("{e}");
+                self.log.push(cmd, 1, Some(m.clone()));
+                self.status = format!("error: {m}");
+            }
         }
     }
 
@@ -121,22 +220,79 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),
-                Constraint::Min(3),
-                Constraint::Length(3),
-                Constraint::Length(3),
+                Constraint::Length(3), // tab bar
+                Constraint::Min(3),    // active pane
+                Constraint::Length(3), // action bar / hint
+                Constraint::Length(3), // status
             ])
             .split(f.area());
 
-        // Header.
-        let header = Paragraph::new(Line::from(vec![
-            Span::styled(" vmctl-tui ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::raw("  vm-bhyve control — VirtualBox-style"),
-        ]))
-        .block(Block::default().borders(Borders::ALL).title("vmctl"));
-        f.render_widget(header, chunks[0]);
+        // Tab bar.
+        panes::render_tabs(f, chunks[0], self.pane);
 
-        // VM list.
+        // Active pane.
+        match self.pane {
+            Pane::Guests => self.draw_guests(f, chunks[1]),
+            Pane::Wizard => self.wizard.render(f, chunks[1]),
+            Pane::Config => {
+                let (cpu, mem) = self
+                    .selected()
+                    .map(|r| (r.cpu.clone(), r.memory.clone()))
+                    .unwrap_or_else(|| ("-".into(), "-".into()));
+                let name = self
+                    .selected()
+                    .map(|r| r.name.clone())
+                    .unwrap_or_else(|| "(none)".into());
+                panes::render_config(f, chunks[1], &name, &cpu, &mem);
+            }
+            Pane::Console => {
+                let (name, running) = self
+                    .selected()
+                    .map(|r| (r.name.clone(), r.state.starts_with("Running")))
+                    .unwrap_or_else(|| ("(none)".into(), false));
+                panes::render_console(f, chunks[1], &name, running);
+            }
+            Pane::Log => self.log.render(f, chunks[1]),
+        }
+
+        // Action bar (context-sensitive).
+        match self.pane {
+            Pane::Guests => {
+                let spans: Vec<Span> = Action::ALL
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| {
+                        let label = format!(" {}.{} ", i + 1, a.label());
+                        if i == self.action_idx {
+                            Span::styled(label, Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD))
+                        } else {
+                            Span::raw(label)
+                        }
+                    })
+                    .collect();
+                let bar = Paragraph::new(Line::from(spans))
+                    .block(Block::default().borders(Borders::ALL).title("Actions (\u{2190}\u{2192} pick \u{00b7} Enter run)"));
+                f.render_widget(bar, chunks[2]);
+            }
+            Pane::Wizard => {
+                let hint = Paragraph::new("Tab/\u{2191}\u{2193} field \u{00b7} \u{2190}\u{2192} template \u{00b7} type to edit \u{00b7} Enter create \u{00b7} Esc back")
+                    .block(Block::default().borders(Borders::ALL).title("Wizard"));
+                f.render_widget(hint, chunks[2]);
+            }
+            _ => {
+                let hint = Paragraph::new("1-5 switch pane \u{00b7} Esc back to guests \u{00b7} q quit")
+                    .block(Block::default().borders(Borders::ALL).title("Navigate"));
+                f.render_widget(hint, chunks[2]);
+            }
+        }
+
+        // Status line.
+        let status = Paragraph::new(self.status.clone())
+            .block(Block::default().borders(Borders::ALL).title("Status"));
+        f.render_widget(status, chunks[3]);
+    }
+
+    fn draw_guests(&mut self, f: &mut Frame, area: Rect) {
         let items: Vec<ListItem> = self
             .rows
             .iter()
@@ -151,30 +307,8 @@ impl App {
         let list = List::new(items)
             .block(Block::default().borders(Borders::ALL).title("Guests"))
             .highlight_style(Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD))
-            .highlight_symbol("▶ ");
-        f.render_stateful_widget(list, chunks[1], &mut self.state);
-
-        // Action bar.
-        let spans: Vec<Span> = Action::ALL
-            .iter()
-            .enumerate()
-            .map(|(i, a)| {
-                let label = format!(" {}.{} ", i + 1, a.label());
-                if i == self.action_idx {
-                    Span::styled(label, Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD))
-                } else {
-                    Span::raw(label)
-                }
-            })
-            .collect();
-        let bar = Paragraph::new(Line::from(spans))
-            .block(Block::default().borders(Borders::ALL).title("Actions (Enter to run)"));
-        f.render_widget(bar, chunks[2]);
-
-        // Status line.
-        let status = Paragraph::new(self.status.clone())
-            .block(Block::default().borders(Borders::ALL).title("Status"));
-        f.render_widget(status, chunks[3]);
+            .highlight_symbol("\u{25b6} ");
+        f.render_stateful_widget(list, area, &mut self.state);
     }
 }
 

@@ -6,6 +6,7 @@
 mod actions;
 mod assistant;
 mod backend;
+mod panes;
 mod ui;
 mod vmbhyve;
 
