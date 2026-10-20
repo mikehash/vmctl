@@ -1,14 +1,13 @@
-[package]
-name = "vmctl-tui"
+[workspace]
+resolver = "2"
+members = ["core", "tui"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-description = "A friendly ratatui TUI for vm-bhyve — VirtualBox-style ease of use"
+description = "vmctl — friendly vm-bhyve front-ends (TUI + Desktop) over one shared core"
 
-[dependencies]
-ratatui = "0.29"
-crossterm = "0.28"
+[workspace.dependencies]
 anyhow = "1"
 thiserror = "2"
-
-[dev-dependencies]
 tempfile = "3"

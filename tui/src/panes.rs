@@ -375,7 +375,7 @@ pub fn render_config(f: &mut ratatui::Frame, area: Rect, guest: &str, cpu: &str,
 /// the plan it understood, and confirm.
 pub struct Assistant {
     pub input: String,
-    pub last_plan: Option<crate::assistant::Plan>,
+    pub last_plan: Option<vmctl_core::assistant::Plan>,
     pub transcript: Vec<String>,
 }
 
@@ -411,7 +411,7 @@ impl Assistant {
             return;
         }
         self.transcript.push(format!("> {text}"));
-        let plan = crate::assistant::plan_for(&text, known);
+        let plan = vmctl_core::assistant::plan_for(&text, known);
         self.transcript.push(format!("  plan: {}", plan.summary));
         for s in &plan.steps {
             self.transcript.push(format!("    - {} ({})", s.cmd(), s.effect));

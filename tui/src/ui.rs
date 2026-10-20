@@ -26,9 +26,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::{Frame, Terminal};
 
-use crate::actions::{self, Action};
+use vmctl_core::actions::{self, Action};
 use crate::panes::{self, Assistant, LogTail, Pane, Wizard};
-use crate::vmbhyve::{Vm, VmSummary};
+use vmctl_core::vmbhyve::{Vm, VmSummary};
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
 

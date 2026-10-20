@@ -1,0 +1,19 @@
+[package]
+name = "vmctl-tui"
+version.workspace = true
+edition.workspace = true
+description = "A friendly ratatui TUI for vm-bhyve — VirtualBox-style ease of use"
+
+[[bin]]
+name = "vmctl-tui"
+path = "src/main.rs"
+
+[dependencies]
+vmctl-core = { path = "../core" }
+ratatui = "0.29"
+crossterm = "0.28"
+anyhow.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -3,16 +3,11 @@
 //! Foundation: the `vm(8)` wrapper (`vmbhyve`) + actions + the VM-list TUI.
 //! The creation wizard and assistant layer build on top in later ticks.
 
-mod actions;
-mod assistant;
-mod backend;
 mod panes;
 mod ui;
-mod vmbhyve;
 
-use backend::Backend;
-
-use vmbhyve::Vm;
+use vmctl_core::backend::Backend;
+use vmctl_core::vmbhyve::Vm;
 
 const USAGE: &str = "\
 vmctl-tui — a friendly TUI for vm-bhyve (VirtualBox-style)
@@ -71,12 +66,12 @@ fn main() {
     // runs it against the live backend — proving the engine end-to-end on vm(8).
     if let Some(i) = std::env::args().position(|a| a == "--plan") {
         let text = std::env::args().nth(i + 1).unwrap_or_default();
-        let mut backend = backend::VmBackend::default();
+        let mut backend = vmctl_core::backend::VmBackend::default();
         let known: Vec<String> = backend
             .list()
             .map(|rows| rows.into_iter().map(|r| r.name).collect())
             .unwrap_or_default();
-        let plan = assistant::plan_for(&text, &known);
+        let plan = vmctl_core::assistant::plan_for(&text, &known);
         println!("PLAN: {}", plan.summary);
         for (n, s) in plan.steps.iter().enumerate() {
             println!("  {}. {}  [{}]", n + 1, s.title, s.cmd());
@@ -84,7 +79,7 @@ fn main() {
         if plan.steps.is_empty() {
             return;
         }
-        let report = assistant::run_plan(&mut backend, &plan);
+        let report = vmctl_core::assistant::run_plan(&mut backend, &plan);
         for r in &report.results {
             println!("  -> exit {}: {}", r.code, r.cmd);
             if !r.stderr.is_empty() {

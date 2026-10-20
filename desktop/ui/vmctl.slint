@@ -1,0 +1,177 @@
+// vmctl-desktop — Mission Control UI (Slint).
+// Maps 1:1 to the prototype's design system: crimson = action, ember = focus/
+// assistant, state colours never reuse crimson. Shared core drives all state.
+
+import { Button, LineEdit, ComboBox, ListView, TabWidget } from "std-widgets.slint";
+
+// ── Design tokens ──
+global C {
+    in-out property <brush> bg: #0A0B0D;
+    in-out property <brush> panel: #0F1114;
+    in-out property <brush> surface: #14171B;
+    in-out property <brush> raised: #1A1E23;
+    in-out property <brush> line: #1E2228;
+    in-out property <brush> text: #ECEEF1;
+    in-out property <brush> sub: #B4BAC4;
+    in-out property <brush> muted: #9AA1AC;
+    in-out property <brush> crimson: #DC2F45;
+    in-out property <brush> ember: #FF7A3D;
+    in-out property <brush> green: #34D399;
+    in-out property <brush> amber: #F5B53D;
+    in-out property <brush> violet: #B79CFF;
+}
+
+export struct VmRowData {
+    name: string,
+    os: string,
+    state: string,
+    cpu: int,
+    mem: string,
+}
+
+export component MainWindow inherits Window {
+    title: "vmctl — Mission Control";
+    background: C.bg;
+    preferred-width: 1280px;
+    preferred-height: 800px;
+
+    in-out property <[VmRowData]> vms: [
+        { name: "testvm", os: "FreeBSD", state: "Locked", cpu: 1, mem: "256M" },
+    ];
+    in-out property <int> selected: 0;
+    in-out property <string> status: "Ready · doas vmctl-desktop";
+    in-out property <string> assistant-input: "";
+    in-out property <[string]> transcript: ["Ask vmctl in plain English…"];
+
+    callback start-selected();
+    callback stop-selected();
+    callback ask(string);
+
+    VerticalLayout {
+        padding: 0px;
+        spacing: 0px;
+
+        // ── Header ──
+        Rectangle {
+            height: 56px;
+            background: #0C0E10;
+            HorizontalLayout {
+                padding: 16px;
+                spacing: 12px;
+                alignment: start;
+                Text { text: "⬢ VMCTL"; color: C.crimson; font-size: 18px; font-weight: 800; vertical-alignment: center; }
+                Text { text: "Mission Control"; color: C.sub; font-size: 14px; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                Text { text: root.status; color: C.muted; font-size: 13px; vertical-alignment: center; }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 0px;
+
+            // ── VM list ──
+            Rectangle {
+                width: 300px;
+                background: C.panel;
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 6px;
+                    Text { text: "MACHINES"; color: C.muted; font-size: 12px; font-weight: 700; }
+                    for vm[i] in root.vms : Rectangle {
+                        height: 56px;
+                        border-radius: 8px;
+                        background: root.selected == i ? C.raised : transparent;
+                        border-color: root.selected == i ? C.line : transparent;
+                        border-width: 1px;
+                        TouchArea {
+                            clicked => { root.selected = i; }
+                        }
+                        HorizontalLayout {
+                            padding: 10px;
+                            spacing: 8px;
+                            alignment: start;
+                            Rectangle {
+                                width: 8px; height: 8px; border-radius: 4px;
+                                y: 14px;
+                                background: vm.state == "Running" ? C.green : vm.state == "Stopped" ? C.muted : vm.state == "Suspended" ? C.amber : C.violet;
+                            }
+                            VerticalLayout {
+                                spacing: 2px;
+                                Text { text: vm.name; color: C.text; font-size: 14px; font-weight: 600; }
+                                Text { text: vm.os + " · " + vm.cpu + " vCPU · " + vm.mem; color: C.muted; font-size: 11px; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Detail + assistant ──
+            Rectangle {
+                horizontal-stretch: 1;
+                background: C.bg;
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 14px;
+
+                    // Detail header.
+                    HorizontalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        Text {
+                            text: root.vms.length > 0 ? root.vms[root.selected].name : "(none)";
+                            color: C.text; font-size: 24px; font-weight: 700;
+                        }
+                        Rectangle {
+                            width: 100px; height: 26px; border-radius: 13px;
+                            background: C.raised;
+                            Text {
+                                text: root.vms.length > 0 ? root.vms[root.selected].state : "";
+                                color: C.sub; font-size: 12px; horizontal-alignment: center; vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    // Action bar.
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        Button { text: "Start"; clicked => { root.start-selected(); } }
+                        Button { text: "Stop"; clicked => { root.stop-selected(); } }
+                        Button { text: "Console"; }
+                        Button { text: "Snapshot"; }
+                    }
+
+                    // Assistant.
+                    Rectangle {
+                        vertical-stretch: 1;
+                        border-radius: 12px;
+                        background: C.surface;
+                        border-color: C.line;
+                        border-width: 1px;
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 8px;
+                            Text { text: "ASK VMCTL"; color: C.ember; font-size: 11px; font-weight: 700; }
+                            for line in root.transcript : Text {
+                                text: line;
+                                color: line.starts-with(">") ? C.ember : C.sub;
+                                font-size: 13px;
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                LineEdit {
+                                    horizontal-stretch: 1;
+                                    placeholder-text: "e.g. make a 4GB ubuntu machine with 2 cpus";
+                                    text <=> root.assistant-input;
+                                    accepted => { root.ask(root.assistant-input); }
+                                }
+                                Button { text: "Plan"; clicked => { root.ask(root.assistant-input); } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
