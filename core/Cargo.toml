@@ -7,6 +7,7 @@ description = "Shared core for vmctl front-ends: typed vm(8) wrapper, actions, a
 [dependencies]
 anyhow.workspace = true
 thiserror.workspace = true
+libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

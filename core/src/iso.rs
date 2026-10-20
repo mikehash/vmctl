@@ -108,15 +108,70 @@ pub fn scan_dir(dir: &Path, source: &'static str) -> Vec<Iso> {
         .collect()
 }
 
-/// The user's installers directory: `$VMCTL_INSTALLERS` or `~/installers`.
+/// Resolve the *invoking user's* home directory.
+///
+/// The TUI re-execs under `doas`/`sudo` to get `vm(8)` root, so `$HOME` is
+/// the wrong user's home — under doas it's `/root`, and the ISO picker then
+/// reports "none found" even though the media sits in `/home/<user>/installers`.
+/// `DOAS_USER`/`SUDO_USER` name the real user; fall back to `$HOME` otherwise.
+fn invoking_user_home() -> Option<PathBuf> {
+    for var in ["DOAS_USER", "SUDO_USER"] {
+        if let Ok(user) = std::env::var(var) {
+            if user.is_empty() || user == "root" {
+                continue;
+            }
+            if let Some(dir) = home_for_user(&user) {
+                return Some(dir);
+            }
+        }
+    }
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Look up a user's home directory the platform way (FreeBSD/Linux: passwd).
+///
+/// Uses thread-safe `getpwnam_r` — plain `getpwnam` returns a static buffer
+/// that the parallel test runner (and std's own temp-dir lookups) race on.
+#[cfg(unix)]
+fn home_for_user(user: &str) -> Option<PathBuf> {
+    use std::ffi::{CStr, CString};
+    use std::os::unix::ffi::OsStrExt;
+
+    let name = CString::new(user).ok()?;
+    let mut buf = vec![0u8; 4096];
+    let mut passwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    let rc = unsafe {
+        libc::getpwnam_r(
+            name.as_ptr(),
+            &mut passwd,
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+            &mut result,
+        )
+    };
+    if rc != 0 || result.is_null() || passwd.pw_dir.is_null() {
+        return None;
+    }
+    let dir = unsafe { CStr::from_ptr(passwd.pw_dir) }.to_bytes();
+    if dir.is_empty() {
+        return None;
+    }
+    let mut p = PathBuf::new();
+    p.push(std::ffi::OsStr::from_bytes(dir));
+    Some(p)
+}
+
+/// The user's installers directory: `$VMCTL_INSTALLERS`, the invoking user's
+/// `~/installers` (even under doas/sudo), then `$HOME/installers`.
 pub fn installers_dir() -> PathBuf {
     if let Ok(d) = std::env::var("VMCTL_INSTALLERS") {
         if !d.is_empty() {
             return PathBuf::from(d);
         }
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    PathBuf::from(home).join("installers")
+    let home = invoking_user_home().unwrap_or_else(|| PathBuf::from("/root"));
+    home.join("installers")
 }
 
 /// The datastore's `.iso` directory (where `vm-bhyve` looks for media).
@@ -208,5 +263,23 @@ mod tests {
             datastore_iso_dir(Path::new("/zroot/vm")),
             PathBuf::from("/zroot/vm/.iso")
         );
+    }
+
+    #[test]
+    fn invoking_user_home_ignores_root_and_falls_back_to_env() {
+        // Simulate `doas`: DOAS_USER names the real user; HOME is /root.
+        // installers_dir must resolve to the invoking user's home, not /root.
+        let real_user = std::env::var("USER").unwrap_or_else(|_| "root".into());
+        if real_user == "root" {
+            return; // can't test user-home resolution when running as root
+        }
+        std::env::remove_var("VMCTL_INSTALLERS");
+        std::env::set_var("DOAS_USER", &real_user);
+        std::env::set_var("HOME", "/root");
+        let dir = installers_dir();
+        // Should point at the invoking user's home, not /root.
+        let home = home_for_user(&real_user).expect("passwd lookup for current user");
+        assert_eq!(dir, home.join("installers"));
+        assert_ne!(dir, PathBuf::from("/root/installers"));
     }
 }
