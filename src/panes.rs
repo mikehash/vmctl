@@ -14,6 +14,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tab
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
     Guests,
+    Assistant,
     Wizard,
     Config,
     Console,
@@ -21,8 +22,9 @@ pub enum Pane {
 }
 
 impl Pane {
-    pub const ALL: [Pane; 5] = [
+    pub const ALL: [Pane; 6] = [
         Pane::Guests,
+        Pane::Assistant,
         Pane::Wizard,
         Pane::Config,
         Pane::Console,
@@ -32,6 +34,7 @@ impl Pane {
     pub fn title(&self) -> &'static str {
         match self {
             Pane::Guests => "Guests",
+            Pane::Assistant => "Ask vmctl",
             Pane::Wizard => "New machine",
             Pane::Config => "Config",
             Pane::Console => "Console",
@@ -39,14 +42,15 @@ impl Pane {
         }
     }
 
-    /// 1-5 hotkey to jump straight to a pane.
+    /// 1-6 hotkey to jump straight to a pane.
     pub fn from_digit(d: char) -> Option<Pane> {
         match d {
             '1' => Some(Pane::Guests),
-            '2' => Some(Pane::Wizard),
-            '3' => Some(Pane::Config),
-            '4' => Some(Pane::Console),
-            '5' => Some(Pane::Log),
+            '2' => Some(Pane::Assistant),
+            '3' => Some(Pane::Wizard),
+            '4' => Some(Pane::Config),
+            '5' => Some(Pane::Console),
+            '6' => Some(Pane::Log),
             _ => None,
         }
     }
@@ -365,6 +369,119 @@ pub fn render_config(f: &mut ratatui::Frame, area: Rect, guest: &str, cpu: &str,
     f.render_widget(p, area);
 }
 
+/// The assistant pane: a plain-English prompt that turns intent into a
+/// validated plan (via `assistant::plan_for`) and runs it step by step. This
+/// is the "ease of use like VirtualBox" core — you type what you want, review
+/// the plan it understood, and confirm.
+pub struct Assistant {
+    pub input: String,
+    pub last_plan: Option<crate::assistant::Plan>,
+    pub transcript: Vec<String>,
+}
+
+impl Default for Assistant {
+    fn default() -> Self {
+        Self {
+            input: String::new(),
+            last_plan: None,
+            transcript: vec![
+                "Ask vmctl in plain English, e.g.:".into(),
+                "  \"make a 4GB ubuntu machine with 2 cpus\"".into(),
+                "  \"start testvm\"".into(),
+                "  \"stop everything\"".into(),
+                "Type a request and press Enter to see the plan.".into(),
+            ],
+        }
+    }
+}
+
+impl Assistant {
+    pub fn type_char(&mut self, c: char) {
+        self.input.push(c);
+    }
+
+    pub fn backspace(&mut self) {
+        self.input.pop();
+    }
+
+    /// Turn the current input into a plan and stage it for confirmation.
+    pub fn submit(&mut self, known: &[String]) {
+        let text = self.input.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        self.transcript.push(format!("> {text}"));
+        let plan = crate::assistant::plan_for(&text, known);
+        self.transcript.push(format!("  plan: {}", plan.summary));
+        for s in &plan.steps {
+            self.transcript.push(format!("    - {} ({})", s.cmd(), s.effect));
+        }
+        self.last_plan = Some(plan);
+        self.input.clear();
+    }
+
+    pub fn render(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(3),    // transcript
+                Constraint::Length(3), // plan preview (if any)
+                Constraint::Length(3), // input line
+            ])
+            .split(area);
+
+        // Transcript.
+        let items: Vec<ListItem> = self
+            .transcript
+            .iter()
+            .map(|l| {
+                let style = if l.starts_with('>') {
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                } else if l.trim_start().starts_with('-') {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(l.clone()).style(style)
+            })
+            .collect();
+        let list = List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Ask vmctl (plain English)"),
+        );
+        f.render_widget(list, chunks[0]);
+
+        // Plan preview.
+        if let Some(plan) = &self.last_plan {
+            let preview = if plan.steps.is_empty() {
+                format!("{}  [{}]", plan.summary, plan.risk)
+            } else {
+                format!(
+                    "{} step(s) · risk {} · touches {}  — Enter to run",
+                    plan.steps.len(),
+                    plan.risk,
+                    plan.touches
+                )
+            };
+            let p = Paragraph::new(preview).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Plan (Enter run · Esc clear)"),
+            );
+            f.render_widget(p, chunks[1]);
+        }
+
+        // Input line.
+        let input = Paragraph::new(format!("{}_", self.input)).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Request"),
+        );
+        f.render_widget(input, chunks[2]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,7 +521,8 @@ mod tests {
     #[test]
     fn pane_hotkeys_map_to_panes() {
         assert_eq!(Pane::from_digit('1'), Some(Pane::Guests));
-        assert_eq!(Pane::from_digit('5'), Some(Pane::Log));
+        assert_eq!(Pane::from_digit('2'), Some(Pane::Assistant));
+        assert_eq!(Pane::from_digit('6'), Some(Pane::Log));
         assert_eq!(Pane::from_digit('9'), None);
     }
 
@@ -415,5 +533,23 @@ mod tests {
         log.push("vm start y".into(), 1, Some("locked".into()));
         assert_eq!(log.entries.len(), 2);
         assert_eq!(log.entries[1].code, 1);
+    }
+
+    #[test]
+    fn assistant_submits_to_plan() {
+        let mut a = Assistant::default();
+        a.input = "make a 4GB ubuntu machine with 2 cpus".into();
+        a.submit(&["testvm".into()]);
+        assert!(a.last_plan.is_some());
+        let plan = a.last_plan.unwrap();
+        assert!(!plan.steps.is_empty());
+        assert!(a.transcript.iter().any(|l| l.starts_with("> ")));
+    }
+
+    #[test]
+    fn assistant_empty_input_no_plan() {
+        let mut a = Assistant::default();
+        a.submit(&[]);
+        assert!(a.last_plan.is_none());
     }
 }

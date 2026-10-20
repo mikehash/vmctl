@@ -27,7 +27,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::{Frame, Terminal};
 
 use crate::actions::{self, Action};
-use crate::panes::{self, LogTail, Pane, Wizard};
+use crate::panes::{self, Assistant, LogTail, Pane, Wizard};
 use crate::vmbhyve::{Vm, VmSummary};
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
@@ -42,6 +42,7 @@ pub struct App {
     pane: Pane,
     wizard: Wizard,
     log: LogTail,
+    assistant: Assistant,
 }
 
 impl App {
@@ -56,6 +57,7 @@ impl App {
             pane: Pane::Guests,
             wizard: Wizard::default(),
             log: LogTail::default(),
+            assistant: Assistant::default(),
         };
         app.refresh();
         if !app.rows.is_empty() {
@@ -134,7 +136,7 @@ impl App {
                 }
                 return;
             }
-            KeyCode::Char(c @ '1'..='5') => {
+            KeyCode::Char(c @ '1'..='6') => {
                 if let Some(p) = Pane::from_digit(c) {
                     self.pane = p;
                 }
@@ -161,6 +163,19 @@ impl App {
                 }
                 _ => {}
             },
+            Pane::Assistant => match code {
+                KeyCode::Backspace => self.assistant.backspace(),
+                KeyCode::Char(c) => self.assistant.type_char(c),
+                KeyCode::Enter => {
+                    if self.assistant.last_plan.is_some() && self.assistant.input.trim().is_empty() {
+                        self.run_assistant_plan();
+                    } else {
+                        let known: Vec<String> = self.rows.iter().map(|r| r.name.clone()).collect();
+                        self.assistant.submit(&known);
+                    }
+                }
+                _ => {}
+            },
             Pane::Wizard => match code {
                 KeyCode::Down | KeyCode::Tab => self.wizard.next_field(),
                 KeyCode::Up | KeyCode::BackTab => self.wizard.prev_field(),
@@ -175,6 +190,42 @@ impl App {
                 // Read-only panes: navigation handled by globals.
             }
         }
+    }
+
+    /// Run the staged assistant plan step by step, stopping at the first
+    /// failure and keeping the real stderr — mirroring `assistant::run_plan`.
+    fn run_assistant_plan(&mut self) {
+        let Some(plan) = self.assistant.last_plan.clone() else {
+            return;
+        };
+        if plan.steps.is_empty() {
+            self.status = "nothing to run".into();
+            return;
+        }
+        self.assistant.transcript.push(format!("running {} step(s)…", plan.steps.len()));
+        for step in &plan.steps {
+            let cmd = step.cmd();
+            let refs: Vec<&str> = step.argv.iter().map(|s| s.as_str()).collect();
+            match self.vm.run(&refs) {
+                Ok(msg) => {
+                    self.log.push(cmd.clone(), 0, None);
+                    self.assistant.transcript.push(format!("  ✓ {cmd}"));
+                    self.status = msg;
+                }
+                Err(e) => {
+                    let m = format!("{e}");
+                    self.log.push(cmd.clone(), 1, Some(m.clone()));
+                    self.assistant.transcript.push(format!("  ✗ {cmd}  ↳ {m}"));
+                    self.assistant.transcript.push("  stopped at first failure; nothing after ran.".into());
+                    self.status = format!("plan stopped: {m}");
+                    self.refresh();
+                    return;
+                }
+            }
+        }
+        self.assistant.transcript.push("  done — all steps succeeded.".into());
+        self.assistant.last_plan = None;
+        self.refresh();
     }
 
     /// Run the wizard's `vm create` + `vm install` against the live backend.
@@ -233,6 +284,7 @@ impl App {
         // Active pane.
         match self.pane {
             Pane::Guests => self.draw_guests(f, chunks[1]),
+            Pane::Assistant => self.assistant.render(f, chunks[1]),
             Pane::Wizard => self.wizard.render(f, chunks[1]),
             Pane::Config => {
                 let (cpu, mem) = self
@@ -273,6 +325,11 @@ impl App {
                 let bar = Paragraph::new(Line::from(spans))
                     .block(Block::default().borders(Borders::ALL).title("Actions (\u{2190}\u{2192} pick \u{00b7} Enter run)"));
                 f.render_widget(bar, chunks[2]);
+            }
+            Pane::Assistant => {
+                let hint = Paragraph::new("Type a request \u{00b7} Enter to plan \u{00b7} Enter again to run \u{00b7} Esc back")
+                    .block(Block::default().borders(Borders::ALL).title("Ask vmctl"));
+                f.render_widget(hint, chunks[2]);
             }
             Pane::Wizard => {
                 let hint = Paragraph::new("Tab/\u{2191}\u{2193} field \u{00b7} \u{2190}\u{2192} template \u{00b7} type to edit \u{00b7} Enter create \u{00b7} Esc back")
