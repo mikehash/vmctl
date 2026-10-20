@@ -63,7 +63,44 @@ impl App {
         if !app.rows.is_empty() {
             app.state.select(Some(0));
         }
+        app.reload_isos();
         app
+    }
+
+    /// Refresh the wizard's ISO picker from `~/installers` + each datastore's
+    /// `.iso` dir. Called on startup and after the guest list changes, so the
+    /// picker always reflects what's actually on disk.
+    fn reload_isos(&mut self) {
+        use std::collections::BTreeSet;
+        use std::path::PathBuf;
+
+        // Gather the distinct datastores we know about, plus a sane default.
+        let mut stores: BTreeSet<PathBuf> = BTreeSet::new();
+        for r in &self.rows {
+            if !r.datastore.is_empty() {
+                stores.insert(PathBuf::from(&r.datastore));
+            }
+        }
+        if stores.is_empty() {
+            stores.insert(PathBuf::from("/zroot/vm"));
+        }
+
+        // installers first, then each datastore's .iso dir.
+        let mut isos = vmctl_core::iso::scan_dir(&vmctl_core::iso::installers_dir(), "installers");
+        for ds in &stores {
+            isos.extend(vmctl_core::iso::scan_dir(
+                &vmctl_core::iso::datastore_iso_dir(ds),
+                "datastore",
+            ));
+        }
+        isos.sort_by(|a, b| {
+            let rank = |s: &str| if s == "installers" { 0 } else { 1 };
+            rank(a.source)
+                .cmp(&rank(b.source))
+                .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
+        });
+        isos.dedup_by(|a, b| a.name == b.name);
+        self.wizard.load_isos(isos);
     }
 
     pub fn refresh(&mut self) {
@@ -176,16 +213,36 @@ impl App {
                 }
                 _ => {}
             },
-            Pane::Wizard => match code {
-                KeyCode::Down | KeyCode::Tab => self.wizard.next_field(),
-                KeyCode::Up | KeyCode::BackTab => self.wizard.prev_field(),
-                KeyCode::Left => self.wizard.cycle_template(-1),
-                KeyCode::Right => self.wizard.cycle_template(1),
-                KeyCode::Backspace => self.wizard.backspace(),
-                KeyCode::Char(c) => self.wizard.type_char(c),
-                KeyCode::Enter => self.run_wizard(),
-                _ => {}
-            },
+            Pane::Wizard => {
+                // The ISO picker is modal: while it's open it owns the keys.
+                if self.wizard.picker_open {
+                    match code {
+                        KeyCode::Down | KeyCode::Char('j') => self.wizard.picker_move(1),
+                        KeyCode::Up | KeyCode::Char('k') => self.wizard.picker_move(-1),
+                        KeyCode::Enter => self.wizard.picker_select(),
+                        KeyCode::Esc => self.wizard.close_picker(),
+                        _ => {}
+                    }
+                    return;
+                }
+                match code {
+                    KeyCode::Down | KeyCode::Tab => self.wizard.next_field(),
+                    KeyCode::Up | KeyCode::BackTab => self.wizard.prev_field(),
+                    KeyCode::Left => self.wizard.cycle_template(-1),
+                    KeyCode::Right => self.wizard.cycle_template(1),
+                    KeyCode::Backspace => self.wizard.backspace(),
+                    KeyCode::Char(c) => self.wizard.type_char(c),
+                    // Enter on the ISO field opens the picker; elsewhere it runs.
+                    KeyCode::Enter => {
+                        if self.wizard.on_iso_field() {
+                            self.wizard.open_picker();
+                        } else {
+                            self.run_wizard();
+                        }
+                    }
+                    _ => {}
+                }
+            }
             Pane::Config | Pane::Console | Pane::Log => {
                 // Read-only panes: navigation handled by globals.
             }

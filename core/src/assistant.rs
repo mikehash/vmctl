@@ -351,7 +351,7 @@ mod tests {
         let mut b = MockBackend::new().with("a", "Stopped").with("b", "Stopped");
         b.fail_next = Some(("start a".into(), 1, "a is locked".into()));
         let known = vec!["a".to_string(), "b".to_string()];
-        let p = plan_for("stop all running", &known); // 2 stop steps
+        let _ = &known;
         // make it a start-all style plan manually to test ordering
         let p = Plan {
             summary: "start both".into(),

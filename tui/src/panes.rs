@@ -88,11 +88,21 @@ pub struct Field {
 
 /// The creation wizard: template → cpu/memory/disk/ISO → `vm create` + `vm install`.
 /// This mirrors the desktop wizard's steps in a linear, keyboard-driven form.
+///
+/// The ISO step is a real **picker**, not a text box: it lists the install
+/// media actually present in `~/installers` and the datastore's `.iso` dir, so
+/// the user picks from what's on disk instead of typing a filename and hoping.
 pub struct Wizard {
     pub fields: Vec<Field>,
     pub cursor: usize,
     pub template_idx: usize,
-    pub templates: Vec<(&'static str, &'static str)>, // (id, iso)
+    pub templates: Vec<(&'static str, &'static str)>, // (id, iso) — fallback guesses
+    /// Discovered install media (from `vmctl_core::iso::discover`).
+    pub isos: Vec<vmctl_core::Iso>,
+    /// True while the ISO picker overlay is open.
+    pub picker_open: bool,
+    /// Highlighted row in the picker.
+    pub picker_idx: usize,
 }
 
 impl Default for Wizard {
@@ -103,6 +113,7 @@ impl Default for Wizard {
                 Field { label: "CPUs", value: "2".into(), hint: "vCPU count" },
                 Field { label: "Memory", value: "4G".into(), hint: "e.g. 4G, 512M" },
                 Field { label: "Disk", value: "20G".into(), hint: "e.g. 20G" },
+                Field { label: "ISO", value: String::new(), hint: "Enter opens the picker" },
             ],
             cursor: 0,
             template_idx: 0,
@@ -114,6 +125,9 @@ impl Default for Wizard {
                 ("openbsd", "install77.iso"),
                 ("alpine", "alpine-virt.iso"),
             ],
+            isos: Vec::new(),
+            picker_open: false,
+            picker_idx: 0,
         }
     }
 }
@@ -123,8 +137,57 @@ impl Wizard {
         self.templates[self.template_idx].0
     }
 
-    pub fn iso(&self) -> &'static str {
-        self.templates[self.template_idx].1
+    /// The ISO to install from: whatever the picker filled in, else the
+    /// template's suggested filename (so the preview is never blank).
+    pub fn iso(&self) -> String {
+        let picked = self.fields[4].value.trim();
+        if !picked.is_empty() {
+            picked.to_string()
+        } else {
+            self.templates[self.template_idx].1.to_string()
+        }
+    }
+
+    /// Load discovered install media into the picker (called when the wizard
+    /// opens, so the list reflects what's on disk right now).
+    pub fn load_isos(&mut self, isos: Vec<vmctl_core::Iso>) {
+        self.isos = isos;
+        self.picker_idx = 0;
+    }
+
+    /// Open the ISO picker overlay (only from the ISO field).
+    pub fn open_picker(&mut self) {
+        self.picker_open = true;
+        self.picker_idx = self
+            .isos
+            .iter()
+            .position(|i| i.name == self.fields[4].value.trim())
+            .unwrap_or(0);
+    }
+
+    pub fn close_picker(&mut self) {
+        self.picker_open = false;
+    }
+
+    pub fn picker_move(&mut self, delta: isize) {
+        if self.isos.is_empty() {
+            return;
+        }
+        let len = self.isos.len() as isize;
+        self.picker_idx = (self.picker_idx as isize + delta).rem_euclid(len) as usize;
+    }
+
+    /// Commit the highlighted picker row into the ISO field and close.
+    pub fn picker_select(&mut self) {
+        if let Some(iso) = self.isos.get(self.picker_idx) {
+            self.fields[4].value = iso.name.clone();
+        }
+        self.picker_open = false;
+    }
+
+    /// True when the cursor is on the ISO field (the picker's trigger).
+    pub fn on_iso_field(&self) -> bool {
+        self.cursor == 4
     }
 
     /// The `vm create` argv this wizard would run.
@@ -147,10 +210,10 @@ impl Wizard {
         ]
     }
 
-    /// The `vm install` argv (boot the installer from the template's ISO).
+    /// The `vm install` argv (boot the installer from the chosen ISO).
     pub fn install_argv(&self) -> Vec<String> {
         let name = self.fields[0].value.trim();
-        vec!["install".into(), name.into(), self.iso().into()]
+        vec!["install".into(), name.into(), self.iso()]
     }
 
     /// True when the required fields are filled in enough to run.
@@ -206,7 +269,7 @@ impl Wizard {
             Span::raw(format!("   ISO: {}", self.iso())),
         ]);
         let tpl = Paragraph::new(tpl_line)
-            .block(Block::default().borders(Borders::ALL).title("Template (Tab to cycle)"));
+            .block(Block::default().borders(Borders::ALL).title("Template (←→ cycle)"));
         f.render_widget(tpl, chunks[0]);
 
         // Fields.
@@ -242,6 +305,69 @@ impl Wizard {
         .block(Block::default().borders(Borders::ALL).title("Will run (Enter to create)"))
         .alignment(Alignment::Left);
         f.render_widget(preview, chunks[2]);
+
+        // ISO picker overlay — a centered box listing real install media.
+        if self.picker_open {
+            self.render_picker(f, area);
+        }
+    }
+
+    /// Draw the ISO picker as a centered overlay over the whole wizard area.
+    fn render_picker(&self, f: &mut ratatui::Frame, area: Rect) {
+        // Center a 70% x 70% box.
+        let w = (area.width * 70 / 100).max(30).min(area.width);
+        let h = (area.height * 70 / 100).max(10).min(area.height);
+        let x = area.x + (area.width.saturating_sub(w)) / 2;
+        let y = area.y + (area.height.saturating_sub(h)) / 2;
+        let box_area = Rect { x, y, width: w, height: h };
+
+        // Dim the background so the picker reads as modal.
+        let backdrop = Paragraph::new("").style(Style::default().bg(Color::Black));
+        f.render_widget(backdrop, area);
+
+        let title = if self.isos.is_empty() {
+            "Install media — none found (Esc to close)".to_string()
+        } else {
+            format!(
+                "Install media — {} found (↑↓ move · Enter select · Esc close)",
+                self.isos.len()
+            )
+        };
+
+        let items: Vec<ListItem> = if self.isos.is_empty() {
+            vec![ListItem::new(
+                "No .iso/.img in ~/installers or <datastore>/.iso",
+            )]
+        } else {
+            self.isos
+                .iter()
+                .enumerate()
+                .map(|(i, iso)| {
+                    let marker = if i == self.picker_idx { "▶ " } else { "  " };
+                    let line = format!(
+                        "{}{:<34} {:>7}  [{}]",
+                        marker,
+                        iso.name,
+                        iso.size_h(),
+                        iso.source
+                    );
+                    let style = if i == self.picker_idx {
+                        Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    ListItem::new(line).style(style)
+                })
+                .collect()
+        };
+
+        let list = List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan))
+                .title(title),
+        );
+        f.render_widget(list, box_area);
     }
 }
 
@@ -363,10 +489,10 @@ pub fn render_config(f: &mut ratatui::Frame, area: Rect, guest: &str, cpu: &str,
             Style::default().fg(Color::Green),
         )),
     ];
-    let p = Paragraph::new(lines)
+    let cfg = Paragraph::new(lines)
         .block(Block::default().borders(Borders::ALL).title("Config"))
         .alignment(Alignment::Left);
-    f.render_widget(p, area);
+    f.render_widget(cfg, area);
 }
 
 /// The assistant pane: a plain-English prompt that turns intent into a
@@ -506,6 +632,61 @@ mod tests {
         assert!(!w.ready());
         w.fields[0].value = "x".into();
         assert!(w.ready());
+    }
+
+    fn sample_isos() -> Vec<vmctl_core::Iso> {
+        use std::path::PathBuf;
+        vec![
+            vmctl_core::Iso { name: "debian.iso".into(), path: PathBuf::from("debian.iso"), size: 756 * 1024 * 1024, source: "installers" },
+            vmctl_core::Iso { name: "ubuntu.iso".into(), path: PathBuf::from("ubuntu.iso"), size: 2 * 1024 * 1024 * 1024, source: "installers" },
+        ]
+    }
+
+    #[test]
+    fn iso_field_triggers_picker_and_select_fills_field() {
+        let mut w = Wizard::default();
+        w.load_isos(sample_isos());
+        // Cursor starts at 0 (Name) — not the ISO field.
+        assert!(!w.on_iso_field());
+        // Move to the ISO field (index 4).
+        for _ in 0..4 {
+            w.next_field();
+        }
+        assert!(w.on_iso_field());
+        // Open the picker, move to the second ISO, select it.
+        w.open_picker();
+        assert!(w.picker_open);
+        w.picker_move(1);
+        w.picker_select();
+        assert!(!w.picker_open);
+        assert_eq!(w.fields[4].value, "ubuntu.iso");
+        // install_argv now uses the picked ISO, not the template guess.
+        assert_eq!(w.install_argv()[2], "ubuntu.iso");
+    }
+
+    #[test]
+    fn picker_move_wraps_and_empty_is_safe() {
+        let mut w = Wizard::default();
+        // Empty picker: move/select are no-ops, never panic.
+        w.picker_move(1);
+        w.picker_select();
+        assert!(!w.picker_open);
+
+        w.load_isos(sample_isos());
+        w.open_picker();
+        w.picker_move(-1); // wraps to the last row
+        assert_eq!(w.picker_idx, 1);
+        w.picker_move(1); // wraps back to the first
+        assert_eq!(w.picker_idx, 0);
+    }
+
+    #[test]
+    fn iso_falls_back_to_template_guess_when_unset() {
+        let mut w = Wizard::default();
+        // No ISO picked → the template's suggested filename shows in the preview.
+        assert_eq!(w.iso(), w.templates[w.template_idx].1);
+        w.fields[4].value = "picked.iso".into();
+        assert_eq!(w.iso(), "picked.iso");
     }
 
     #[test]

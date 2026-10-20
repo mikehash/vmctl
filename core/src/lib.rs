@@ -11,10 +11,12 @@
 pub mod actions;
 pub mod assistant;
 pub mod backend;
+pub mod iso;
 pub mod templates;
 pub mod vmbhyve;
 
 pub use actions::{suggested_action, Action};
 pub use assistant::{plan_for, run_plan, Plan, RunReport, Step};
 pub use backend::{Backend, ExecResult, MockBackend, VmBackend};
+pub use iso::{discover as discover_isos, Iso};
 pub use vmbhyve::{parse_list, Vm, VmError, VmSummary};
