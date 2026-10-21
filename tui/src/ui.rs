@@ -89,7 +89,7 @@ impl App {
         };
         app.refresh();
         if !app.rows.is_empty() {
-            app.state.select(Some(0));
+            app.state.select(Some(1));
         }
         app.reload_isos();
         app
@@ -139,7 +139,8 @@ impl App {
                 if self.rows.is_empty() {
                     self.state.select(None);
                 } else if self.state.selected().is_none() {
-                    self.state.select(Some(0));
+                    // +1 to skip the header row in the rendered list.
+                    self.state.select(Some(1));
                 }
             }
             Err(e) => self.status = format!("error: {e}"),
@@ -147,17 +148,20 @@ impl App {
     }
 
     fn selected(&self) -> Option<&VmSummary> {
-        self.state.selected().and_then(|i| self.rows.get(i))
+        // The list renders a header row at index 0, so the visual selection
+        // index is offset by +1 from the data index. Map back here.
+        self.state.selected().and_then(|i| i.checked_sub(1)).and_then(|i| self.rows.get(i))
     }
 
     fn move_sel(&mut self, delta: isize) {
         if self.rows.is_empty() {
             return;
         }
-        let cur = self.state.selected().unwrap_or(0) as isize;
+        // Visual index is offset by +1 (header row). Data index 0 = visual 1.
+        let cur = self.state.selected().map(|i| i.saturating_sub(1)).unwrap_or(0) as isize;
         let len = self.rows.len() as isize;
         let next = (cur + delta).rem_euclid(len) as usize;
-        self.state.select(Some(next));
+        self.state.select(Some(next + 1));
     }
 
     fn run_selected_action(&mut self) {
