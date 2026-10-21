@@ -69,16 +69,18 @@ pub fn render_tabs(f: &mut ratatui::Frame, area: Rect, active: Pane) {
         .collect();
     let idx = Pane::ALL.iter().position(|p| *p == active).unwrap_or(0);
     let tabs = Tabs::new(titles)
-        .block(Block::default().borders(Borders::ALL).title("vmctl"))
-        .select(idx)
-        .style(Style::default().fg(Color::White))
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(crate::theme::border())
+                .title(Span::styled(" ⬢ VMCTL ", crate::theme::action()))
+                .title_alignment(Alignment::Left)
+                .style(crate::theme::bg()),
         )
-        .divider(Span::raw(" │ "));
+        .select(idx)
+        .style(crate::theme::sub())
+        .highlight_style(crate::theme::focus())
+        .divider(Span::styled(" │ ", crate::theme::muted()));
     f.render_widget(tabs, area);
 }
 

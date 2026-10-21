@@ -21,7 +21,6 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::{Frame, Terminal};
@@ -406,6 +405,7 @@ impl App {
         }
 
         // Action bar (context-sensitive).
+        use crate::theme as t;
         match self.pane {
             Pane::Guests => {
                 let spans: Vec<Span> = Action::ALL
@@ -414,14 +414,19 @@ impl App {
                     .map(|(i, a)| {
                         let label = format!(" {}.{} ", i + 1, a.label());
                         if i == self.action_idx {
-                            Span::styled(label, Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD))
+                            Span::styled(label, t::pill(t::BG, t::CRIMSON))
                         } else {
-                            Span::raw(label)
+                            Span::styled(label, t::sub())
                         }
                     })
                     .collect();
-                let bar = Paragraph::new(Line::from(spans))
-                    .block(Block::default().borders(Borders::ALL).title("Actions (\u{2190}\u{2192} pick \u{00b7} Enter run)"));
+                let bar = Paragraph::new(Line::from(spans)).block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(t::border())
+                        .title(Span::styled(" Actions (\u{2190}\u{2192} pick \u{00b7} Enter run) ", t::ember()))
+                        .style(t::bg()),
+                );
                 f.render_widget(bar, chunks[2]);
             }
             Pane::Assistant => {
@@ -447,28 +452,103 @@ impl App {
         }
 
         // Status line.
-        let status = Paragraph::new(self.status.clone())
-            .block(Block::default().borders(Borders::ALL).title("Status"));
+        let status = Paragraph::new(Span::styled(self.status.clone(), t::text())).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(t::border())
+                .title(Span::styled(" Status ", t::muted()))
+                .style(t::bg()),
+        );
         f.render_widget(status, chunks[3]);
     }
 
     fn draw_guests(&mut self, f: &mut Frame, area: Rect) {
+        use crate::theme as t;
+        use ratatui::style::Color;
+
+        // Column header row, matching the prototype's Machines table.
+        let header = ListItem::new(Line::from(vec![
+            Span::styled(format!("{:<16}", "NAME"), t::muted()),
+            Span::styled(format!("{:<10}", "STATE"), t::muted()),
+            Span::styled(format!("{:<5}", "CPU"), t::muted()),
+            Span::styled(format!("{:<8}", "MEM"), t::muted()),
+            Span::styled(format!("{:<12}", "DATASTORE"), t::muted()),
+            Span::styled("LOADER", t::muted()),
+        ]));
+
         let items: Vec<ListItem> = self
             .rows
             .iter()
             .map(|r| {
-                let line = format!(
-                    "{:<14} {:<12} {:<4} {:<8} {:<6} {}",
-                    r.name, r.loader, r.cpu, r.memory, r.autostart, r.state
-                );
+                // State pill: glyph + tinted background, per the prototype.
+                let (glyph, fg, bg) = state_pill(&r.state);
+                let pill = Span::styled(format!(" {} {} ", glyph, short_state(&r.state)), t::pill(fg, bg));
+                let line = Line::from(vec![
+                    Span::styled(format!("{:<16}", truncate(&r.name, 15)), t::text()),
+                    pill,
+                    Span::styled(format!("{:<5}", r.cpu), t::sub()),
+                    Span::styled(format!("{:<8}", r.memory), t::sub()),
+                    Span::styled(format!("{:<12}", truncate(&r.datastore, 11)), t::muted()),
+                    Span::styled(r.loader.clone(), t::muted()),
+                ]);
                 ListItem::new(line)
             })
             .collect();
-        let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title("Guests"))
-            .highlight_style(Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD))
+
+        let mut all = vec![header];
+        all.extend(items);
+
+        let list = List::new(all)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(t::border())
+                    .title(Span::styled(" Machines ", t::ember()))
+                    .style(t::bg()),
+            )
+            .highlight_style(t::selection())
             .highlight_symbol("\u{25b6} ");
         f.render_stateful_widget(list, area, &mut self.state);
+    }
+}
+
+/// Map a vm(8) state string to the prototype's pill glyph + colors.
+fn state_pill(state: &str) -> (&'static str, ratatui::style::Color, ratatui::style::Color) {
+    use crate::theme as t;
+    use ratatui::style::Color;
+    let s = state.to_lowercase();
+    if s.contains("running") {
+        ("\u{25cf}", t::GREEN, Color::Rgb(0x10, 0x2A, 0x22)) // ● green
+    } else if s.contains("suspended") || s.contains("paused") {
+        ("\u{25d0}", t::VIOLET, Color::Rgb(0x22, 0x1E, 0x33)) // ◐ violet
+    } else if s.contains("locked") {
+        ("\u{25c6}", t::AMBER, Color::Rgb(0x2E, 0x27, 0x12)) // ◆ amber
+    } else {
+        ("\u{25cb}", t::MUTED, Color::Rgb(0x1A, 0x1E, 0x23)) // ○ dim
+    }
+}
+
+/// Short state label for the pill.
+fn short_state(state: &str) -> &'static str {
+    let s = state.to_lowercase();
+    if s.contains("running") {
+        "running"
+    } else if s.contains("suspended") || s.contains("paused") {
+        "susp"
+    } else if s.contains("locked") {
+        "locked"
+    } else {
+        "stopped"
+    }
+}
+
+/// Truncate to `max` chars, appending `…` when clipped.
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let cut: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{cut}\u{2026}")
     }
 }
 
