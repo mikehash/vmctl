@@ -4714,6 +4714,7 @@ name = "vmctl-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "thiserror 2.0.21",
 ]
 

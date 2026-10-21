@@ -57,22 +57,16 @@ impl Pane {
         }
     }
 
-    /// 1-9,0,- hotkey to jump straight to a pane (11 panes).
-    pub fn from_digit(d: char) -> Option<Pane> {
-        match d {
-            '1' => Some(Pane::Guests),
-            '2' => Some(Pane::Assistant),
-            '3' => Some(Pane::Wizard),
-            '4' => Some(Pane::Config),
-            '5' => Some(Pane::Console),
-            '6' => Some(Pane::Log),
-            '7' => Some(Pane::Deploy),
-            '8' => Some(Pane::Snapshots),
-            '9' => Some(Pane::Switches),
-            '0' => Some(Pane::Datastores),
-            '-' => Some(Pane::Images),
-            _ => None,
-        }
+    /// Cycle to the next pane (Tab / Right).
+    pub fn next(&self) -> Pane {
+        let idx = Pane::ALL.iter().position(|p| p == self).unwrap_or(0);
+        Pane::ALL[(idx + 1) % Pane::ALL.len()]
+    }
+
+    /// Cycle to the previous pane (Shift+Tab / Left).
+    pub fn prev(&self) -> Pane {
+        let idx = Pane::ALL.iter().position(|p| p == self).unwrap_or(0);
+        Pane::ALL[(idx + Pane::ALL.len() - 1) % Pane::ALL.len()]
     }
 }
 
@@ -778,16 +772,16 @@ mod tests {
     }
 
     #[test]
-    fn pane_hotkeys_map_to_panes() {
-        assert_eq!(Pane::from_digit('1'), Some(Pane::Guests));
-        assert_eq!(Pane::from_digit('2'), Some(Pane::Assistant));
-        assert_eq!(Pane::from_digit('6'), Some(Pane::Log));
-        assert_eq!(Pane::from_digit('7'), Some(Pane::Deploy));
-        assert_eq!(Pane::from_digit('8'), Some(Pane::Snapshots));
-        assert_eq!(Pane::from_digit('9'), Some(Pane::Switches));
-        assert_eq!(Pane::from_digit('0'), Some(Pane::Datastores));
-        assert_eq!(Pane::from_digit('-'), Some(Pane::Images));
-        assert_eq!(Pane::from_digit('x'), None);
+    fn pane_cycle_wraps_all_panes() {
+        // Tab/Right cycles forward, Shift+Tab/Left cycles back — wraps at both ends.
+        let mut p = Pane::Guests;
+        for _ in 0..Pane::ALL.len() {
+            let n = p.next();
+            assert_ne!(n, p);
+            p = n;
+        }
+        assert_eq!(p, Pane::Guests); // wrapped all the way around
+        assert_eq!(Pane::Guests.prev(), Pane::Images); // wraps backward
     }
 
     #[test]

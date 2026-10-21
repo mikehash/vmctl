@@ -201,10 +201,13 @@ impl App {
                 }
                 return;
             }
-            KeyCode::Char(c @ '1'..='9') | KeyCode::Char(c @ '0') | KeyCode::Char(c @ '-') => {
-                if let Some(p) = Pane::from_digit(c) {
-                    self.pane = p;
-                }
+            // Tab / Shift+Tab / arrows cycle panes (navigation is Tab+arrows, not digits).
+            KeyCode::Tab | KeyCode::Right => {
+                self.pane = self.pane.next();
+                return;
+            }
+            KeyCode::BackTab | KeyCode::Left => {
+                self.pane = self.pane.prev();
                 return;
             }
             _ => {}
@@ -217,13 +220,13 @@ impl App {
                 KeyCode::Up | KeyCode::Char('k') => self.move_sel(-1),
                 KeyCode::Char('r') => self.refresh(),
                 KeyCode::Enter => self.run_selected_action(),
-                KeyCode::Char(c @ '6') => {
+                KeyCode::Char(c) if c.is_ascii_digit() => {
                     self.action_idx = (c as u8 - b'1') as usize;
                 }
-                KeyCode::Left | KeyCode::Char('h') => {
+                KeyCode::Char('h') => {
                     self.action_idx = (self.action_idx + Action::ALL.len() - 1) % Action::ALL.len()
                 }
-                KeyCode::Right | KeyCode::Char('l') => {
+                KeyCode::Char('l') => {
                     self.action_idx = (self.action_idx + 1) % Action::ALL.len()
                 }
                 _ => {}
@@ -254,6 +257,7 @@ impl App {
                     return;
                 }
                 match code {
+                    // Tab/Up/Down move between fields (not panes — digits are for typing).
                     KeyCode::Down | KeyCode::Tab => self.wizard.next_field(),
                     KeyCode::Up | KeyCode::BackTab => self.wizard.prev_field(),
                     KeyCode::Left => self.wizard.cycle_template(-1),
@@ -286,8 +290,6 @@ impl App {
                 match code {
                     KeyCode::Down | KeyCode::Char('j') => pane.move_sel(1),
                     KeyCode::Up | KeyCode::Char('k') => pane.move_sel(-1),
-                    KeyCode::Right | KeyCode::Tab => pane.move_action(1),
-                    KeyCode::Left | KeyCode::BackTab => pane.move_action(-1),
                     KeyCode::Char('r') => self.refresh_feature_panes(),
                     KeyCode::Enter => self.run_feature_action(),
                     _ => {}
@@ -629,7 +631,7 @@ impl App {
                 f.render_widget(hint, chunks[2]);
             }
             _ => {
-                let hint = Paragraph::new("1-7 switch pane \u{00b7} Esc back to guests \u{00b7} q quit")
+                let hint = Paragraph::new("Tab/\u{2190}\u{2192} switch pane \u{00b7} Esc back to guests \u{00b7} q quit")
                     .block(Block::default().borders(Borders::ALL).title("Navigate"));
                 f.render_widget(hint, chunks[2]);
             }
