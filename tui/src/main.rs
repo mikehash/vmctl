@@ -4,6 +4,7 @@
 //! The creation wizard and assistant layer build on top in later ticks.
 
 mod panes;
+mod panes2;
 mod theme;
 mod ui;
 

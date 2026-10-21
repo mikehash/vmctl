@@ -27,6 +27,7 @@ use ratatui::{Frame, Terminal};
 
 use vmctl_core::actions::{self, Action};
 use crate::panes::{self, Assistant, LogTail, Pane, Wizard};
+use crate::panes2;
 use vmctl_core::vmbhyve::{Vm, VmSummary};
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
@@ -42,6 +43,10 @@ pub struct App {
     wizard: Wizard,
     log: LogTail,
     assistant: Assistant,
+    snapshots: panes2::ListPane,
+    switches: panes2::ListPane,
+    datastores: panes2::ListPane,
+    images: panes2::ListPane,
 }
 
 impl App {
@@ -57,6 +62,30 @@ impl App {
             wizard: Wizard::default(),
             log: LogTail::default(),
             assistant: Assistant::default(),
+            snapshots: panes2::ListPane::new(
+                "Snapshots",
+                "SNAPSHOT                          GUEST        AGE",
+                vec!["Rollback", "Clone", "Delete"],
+                "no snapshots — press Enter on a guest in pane 1, then snapshot it",
+            ),
+            switches: panes2::ListPane::new(
+                "Virtual switches",
+                "NAME        TYPE      VLAN   ADDRESS        INTERFACES",
+                vec!["Info", "Create", "Destroy"],
+                "no switches — create one with `vm switch create <name>`",
+            ),
+            datastores: panes2::ListPane::new(
+                "Datastores",
+                "NAME        SPEC",
+                vec!["Info", "Add ISO", "Remove"],
+                "no datastores",
+            ),
+            images: panes2::ListPane::new(
+                "VM images",
+                "UUID                                  NAME        DESCRIPTION",
+                vec!["Provision", "Create", "Destroy"],
+                "no images — create one with `vm image create <name>`",
+            ),
         };
         app.refresh();
         if !app.rows.is_empty() {
@@ -172,7 +201,7 @@ impl App {
                 }
                 return;
             }
-            KeyCode::Char(c @ '1'..='7') => {
+            KeyCode::Char(c @ '1'..='9') | KeyCode::Char(c @ '0') | KeyCode::Char(c @ '-') => {
                 if let Some(p) = Pane::from_digit(c) {
                     self.pane = p;
                 }
@@ -246,9 +275,160 @@ impl App {
                 KeyCode::Enter => self.run_deploy(),
                 _ => {}
             },
+            Pane::Snapshots | Pane::Switches | Pane::Datastores | Pane::Images => {
+                let pane = match self.pane {
+                    Pane::Snapshots => &mut self.snapshots,
+                    Pane::Switches => &mut self.switches,
+                    Pane::Datastores => &mut self.datastores,
+                    Pane::Images => &mut self.images,
+                    _ => unreachable!(),
+                };
+                match code {
+                    KeyCode::Down | KeyCode::Char('j') => pane.move_sel(1),
+                    KeyCode::Up | KeyCode::Char('k') => pane.move_sel(-1),
+                    KeyCode::Right | KeyCode::Tab => pane.move_action(1),
+                    KeyCode::Left | KeyCode::BackTab => pane.move_action(-1),
+                    KeyCode::Char('r') => self.refresh_feature_panes(),
+                    KeyCode::Enter => self.run_feature_action(),
+                    _ => {}
+                }
+            }
             Pane::Config | Pane::Console | Pane::Log => {
                 // Read-only panes: navigation handled by globals.
             }
+        }
+    }
+
+    /// Refresh the four feature panes (Snapshots/Switches/Datastores/Images)
+    /// from the live hypervisor via `vm(8)`.
+    fn refresh_feature_panes(&mut self) {
+        // Switches: `vm switch list`.
+        match self.vm.run(&["switch", "list"]) {
+            Ok(out) => {
+                let rows: Vec<String> = out
+                    .lines()
+                    .skip(1) // header
+                    .filter(|l| !l.trim().is_empty())
+                    .map(|l| l.to_string())
+                    .collect();
+                self.switches.set_rows(rows);
+            }
+            Err(e) => self.switches.status = format!("error: {e}"),
+        }
+        // Datastores: `vm datastore list`.
+        match self.vm.run(&["datastore", "list"]) {
+            Ok(out) => {
+                let rows: Vec<String> = out
+                    .lines()
+                    .skip(1)
+                    .filter(|l| !l.trim().is_empty())
+                    .map(|l| l.to_string())
+                    .collect();
+                self.datastores.set_rows(rows);
+            }
+            Err(e) => self.datastores.status = format!("error: {e}"),
+        }
+        // Images: `vm image list`.
+        match self.vm.run(&["image", "list"]) {
+            Ok(out) => {
+                let rows: Vec<String> = out
+                    .lines()
+                    .skip(1)
+                    .filter(|l| !l.trim().is_empty())
+                    .map(|l| l.to_string())
+                    .collect();
+                self.images.set_rows(rows);
+            }
+            Err(e) => self.images.status = format!("error: {e}"),
+        }
+        // Snapshots: derived from `vm list -v` snapshot sections.
+        match self.vm.run(&["list", "-v"]) {
+            Ok(out) => {
+                let rows: Vec<String> = out
+                    .lines()
+                    .filter(|l| l.contains('@'))
+                    .map(|l| l.trim().to_string())
+                    .collect();
+                self.snapshots.set_rows(rows);
+            }
+            Err(e) => self.snapshots.status = format!("error: {e}"),
+        }
+    }
+
+    /// Run the highlighted action on the active feature pane.
+    fn run_feature_action(&mut self) {
+        let (argv, label): (Vec<String>, String) = match self.pane {
+            Pane::Snapshots => {
+                let Some(row) = self.snapshots.selected() else {
+                    self.snapshots.status = "no snapshot selected".into();
+                    return;
+                };
+                let snap = row.split_whitespace().next().unwrap_or("").to_string();
+                match self.snapshots.action_idx {
+                    0 => (vec!["rollback".into(), "-r".into(), snap.clone()], format!("vm rollback -r {snap}")),
+                    1 => (vec!["clone".into(), snap.clone(), format!("{snap}-copy")], format!("vm clone {snap} {snap}-copy")),
+                    _ => (vec!["snapshot".into(), "-f".into(), snap.clone()], format!("vm snapshot -f {snap}")),
+                }
+            }
+            Pane::Switches => {
+                let Some(row) = self.switches.selected() else {
+                    self.switches.status = "no switch selected".into();
+                    return;
+                };
+                let name = row.split_whitespace().next().unwrap_or("").to_string();
+                match self.switches.action_idx {
+                    0 => (vec!["switch".into(), "info".into(), name.clone()], format!("vm switch info {name}")),
+                    1 => (vec!["switch".into(), "create".into(), name.clone()], format!("vm switch create {name}")),
+                    _ => (vec!["switch".into(), "destroy".into(), name.clone()], format!("vm switch destroy {name}")),
+                }
+            }
+            Pane::Datastores => {
+                let Some(row) = self.datastores.selected() else {
+                    self.datastores.status = "no datastore selected".into();
+                    return;
+                };
+                let name = row.split_whitespace().next().unwrap_or("").to_string();
+                match self.datastores.action_idx {
+                    0 => (vec!["datastore".into(), "list".into()], "vm datastore list".into()),
+                    _ => (vec!["datastore".into(), "remove".into(), name.clone()], format!("vm datastore remove {name}")),
+                }
+            }
+            Pane::Images => {
+                let Some(row) = self.images.selected() else {
+                    self.images.status = "no image selected".into();
+                    return;
+                };
+                let uuid = row.split_whitespace().next().unwrap_or("").to_string();
+                match self.images.action_idx {
+                    0 => (vec!["image".into(), "provision".into(), uuid.clone(), "new-vm".into()], format!("vm image provision {uuid} new-vm")),
+                    _ => (vec!["image".into(), "destroy".into(), uuid.clone()], format!("vm image destroy {uuid}")),
+                }
+            }
+            _ => return,
+        };
+        let argv_refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+        match self.vm.run(&argv_refs) {
+            Ok(out) => {
+                self.log.push(label, 0, None);
+                let msg = if out.trim().is_empty() { "ok".to_string() } else { out.trim().to_string() };
+                self.set_feature_status(msg);
+            }
+            Err(e) => {
+                let m = format!("{e}");
+                self.log.push(label, 1, Some(m.clone()));
+                self.set_feature_status(format!("error: {m}"));
+            }
+        }
+        self.refresh_feature_panes();
+    }
+
+    fn set_feature_status(&mut self, msg: String) {
+        match self.pane {
+            Pane::Snapshots => self.snapshots.status = msg,
+            Pane::Switches => self.switches.status = msg,
+            Pane::Datastores => self.datastores.status = msg,
+            Pane::Images => self.images.status = msg,
+            _ => {}
         }
     }
 
@@ -402,6 +582,10 @@ impl App {
                 let iso = self.wizard.iso();
                 panes::render_deploy(f, chunks[1], &name, has_guest, running, &iso);
             }
+            Pane::Snapshots => self.snapshots.render(f, chunks[1]),
+            Pane::Switches => self.switches.render(f, chunks[1]),
+            Pane::Datastores => self.datastores.render(f, chunks[1]),
+            Pane::Images => self.images.render(f, chunks[1]),
         }
 
         // Action bar (context-sensitive).

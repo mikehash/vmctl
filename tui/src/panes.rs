@@ -20,10 +20,14 @@ pub enum Pane {
     Console,
     Log,
     Deploy,
+    Snapshots,
+    Switches,
+    Datastores,
+    Images,
 }
 
 impl Pane {
-    pub const ALL: [Pane; 7] = [
+    pub const ALL: [Pane; 11] = [
         Pane::Guests,
         Pane::Assistant,
         Pane::Wizard,
@@ -31,6 +35,10 @@ impl Pane {
         Pane::Console,
         Pane::Log,
         Pane::Deploy,
+        Pane::Snapshots,
+        Pane::Switches,
+        Pane::Datastores,
+        Pane::Images,
     ];
 
     pub fn title(&self) -> &'static str {
@@ -42,10 +50,14 @@ impl Pane {
             Pane::Console => "Console",
             Pane::Log => "Activity",
             Pane::Deploy => "Deploy",
+            Pane::Snapshots => "Snapshots",
+            Pane::Switches => "Switches",
+            Pane::Datastores => "Datastores",
+            Pane::Images => "Images",
         }
     }
 
-    /// 1-7 hotkey to jump straight to a pane.
+    /// 1-9,0,- hotkey to jump straight to a pane (11 panes).
     pub fn from_digit(d: char) -> Option<Pane> {
         match d {
             '1' => Some(Pane::Guests),
@@ -55,6 +67,10 @@ impl Pane {
             '5' => Some(Pane::Console),
             '6' => Some(Pane::Log),
             '7' => Some(Pane::Deploy),
+            '8' => Some(Pane::Snapshots),
+            '9' => Some(Pane::Switches),
+            '0' => Some(Pane::Datastores),
+            '-' => Some(Pane::Images),
             _ => None,
         }
     }
@@ -767,15 +783,21 @@ mod tests {
         assert_eq!(Pane::from_digit('2'), Some(Pane::Assistant));
         assert_eq!(Pane::from_digit('6'), Some(Pane::Log));
         assert_eq!(Pane::from_digit('7'), Some(Pane::Deploy));
-        assert_eq!(Pane::from_digit('9'), None);
+        assert_eq!(Pane::from_digit('8'), Some(Pane::Snapshots));
+        assert_eq!(Pane::from_digit('9'), Some(Pane::Switches));
+        assert_eq!(Pane::from_digit('0'), Some(Pane::Datastores));
+        assert_eq!(Pane::from_digit('-'), Some(Pane::Images));
+        assert_eq!(Pane::from_digit('x'), None);
     }
 
     #[test]
-    fn deploy_is_last_tab_and_reachable() {
-        // The Deploy pane is the last tab in the bar and maps to hotkey 7.
-        assert_eq!(*Pane::ALL.last().unwrap(), Pane::Deploy);
+    fn feature_panes_are_last_and_reachable() {
+        // The four feature panes (Snapshots/Switches/Datastores/Images) are the
+        // trailing tabs; Images is last. Deploy remains reachable at hotkey 7.
+        assert_eq!(*Pane::ALL.last().unwrap(), Pane::Images);
+        assert_eq!(Pane::Images.title(), "Images");
+        assert_eq!(Pane::ALL.len(), 11);
         assert_eq!(Pane::Deploy.title(), "Deploy");
-        assert_eq!(Pane::ALL.len(), 7);
     }
 
     #[test]
