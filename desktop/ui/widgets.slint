@@ -1,0 +1,312 @@
+// Primitives — each maps 1:1 to a prototype primitive (Btn, Label, Mono, Card,
+// Pill, ExitBadge, Orb, Hex, Field, Check).
+
+import { C, Icon } from "theme.slint";
+
+export component Btn inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <color> icon-color: kind == "primary" ? #FFFFFF : kind == "danger" ? C.crimson-text : C.text;
+    in property <string> kind: "secondary"; // primary | secondary | danger | ghost
+    in property <string> size: "md";        // sm | md | lg
+    in property <bool> enabled: true;
+    in property <string> hint;              // accessible label for icon-only buttons
+    callback clicked();
+
+    property <length> h: size == "sm" ? 30px : size == "lg" ? 44px : 38px;
+    height: h;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    min-width: text == "" ? h : 0px;
+    border-radius: size == "sm" ? 8px : 10px;
+    opacity: enabled ? 1 : 0.34;
+    background: kind == "primary" ? (ta.pressed ? C.crimson.darker(0.15) : ta.has-hover && enabled ? C.crimson.brighter(0.08) : C.crimson)
+        : kind == "secondary" ? (ta.has-hover && enabled ? C.raised : C.surface)
+        : (ta.has-hover && enabled ? #FFFFFF0A : transparent);
+    border-width: 1px;
+    border-color: kind == "primary" ? C.crimson : kind == "secondary" ? C.line2 : kind == "danger" ? #FF4D6373 : transparent;
+    animate background { duration: 120ms; }
+    accessible-role: button;
+    accessible-label: text != "" ? text : hint;
+    accessible-action-default => { if enabled { clicked(); } }
+
+    HorizontalLayout {
+        padding-left: text == "" ? 0px : (size == "sm" ? 10px : 14px);
+        padding-right: self.padding-left;
+        spacing: 8px;
+        alignment: center;
+        if icon != "" : Icon {
+            y: (parent.height - self.height) / 2;
+            name: icon;
+            color: icon-color;
+            size: root.size == "sm" ? 14px : 16px;
+        }
+        if text != "" : Text {
+            text: root.text;
+            vertical-alignment: center;
+            font-family: C.ui;
+            font-weight: 700;
+            font-size: size == "sm" ? 14px : 15px;
+            color: kind == "primary" ? #FFFFFF : kind == "danger" ? C.crimson-text : kind == "ghost" ? C.sub : C.text;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: enabled ? pointer : not-allowed;
+        clicked => { if enabled { root.clicked(); } }
+    }
+}
+
+export component Label inherits Text {
+    font-family: C.ui;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1.9px;
+    color: C.muted;
+    vertical-alignment: center;
+}
+
+export component Mono inherits Text {
+    font-family: C.mono;
+    font-size: 13px;
+    color: C.text;
+    vertical-alignment: center;
+}
+
+export component UiText inherits Text {
+    font-family: C.ui;
+    font-size: 15px;
+    font-weight: 600;
+    color: C.text;
+    vertical-alignment: center;
+}
+
+export component Heading inherits Text {
+    font-family: C.display;
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 2.6px;
+    color: C.text;
+    vertical-alignment: center;
+}
+
+export component Card inherits Rectangle {
+    in property <length> pad: 18px;
+    in property <length> gap: 12px;
+    background: C.panel;
+    border-width: 1px;
+    border-color: C.line;
+    border-radius: 14px;
+    VerticalLayout {
+        padding: pad;
+        spacing: gap;
+        @children
+    }
+}
+
+export component Divider inherits Rectangle {
+    height: 1px;
+    background: C.line-soft;
+}
+
+export component Dot inherits Rectangle {
+    in property <length> size: 8px;
+    width: size;
+    height: size;
+    border-radius: size / 2;
+}
+
+export component Pill inherits Rectangle {
+    in property <string> kind;
+    in property <string> label;
+    property <color> c: C.state-color(kind);
+    height: 26px;
+    border-radius: 13px;
+    background: c.with-alpha(0.12);
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 6px;
+        alignment: center;
+        Dot { y: (parent.height - 7px) / 2; size: 7px; background: c; }
+        Text { text: label; color: c; font-family: C.ui; font-weight: 700; font-size: 14px; vertical-alignment: center; }
+    }
+}
+
+export component ExitBadge inherits Rectangle {
+    in property <int> code;
+    width: t.preferred-width + 12px;
+    height: 20px;
+    border-radius: 5px;
+    background: code == 0 ? #34D39924 : #FF4D6329;
+    t := Text {
+        text: "exit " + code;
+        font-family: C.mono;
+        font-size: 11px;
+        font-weight: 700;
+        color: code == 0 ? C.green : C.crimson-text;
+    }
+}
+
+export component Hex inherits Rectangle {
+    in property <length> size: 26px;
+    width: size;
+    height: size;
+    Path {
+        width: 100%; height: 100%;
+        viewbox-width: 26; viewbox-height: 26;
+        commands: "M13 1.5 L23 7.25 L23 18.75 L13 24.5 L3 18.75 L3 7.25 Z";
+        stroke: C.crimson; stroke-width: 1.6px * size / 26px; fill: transparent;
+    }
+    Path {
+        width: 100%; height: 100%;
+        viewbox-width: 26; viewbox-height: 26;
+        commands: "M13 7 L18 9.9 L18 16.1 L13 19 L8 16.1 L8 9.9 Z";
+        fill: C.crimson;
+    }
+}
+
+// Assistant orb. Static at rest; when busy the ember dot orbits (only then do we
+// ask for continuous frames).
+export component Orb inherits Rectangle {
+    in property <length> size: 30px;
+    in property <bool> busy;
+    width: size;
+    height: size;
+    property <angle> a: busy ? (animation-tick() / 2s) * 360deg : -45deg;
+    Rectangle {
+        border-radius: size / 2;
+        border-width: 1px;
+        border-color: C.crimson.with-alpha(busy ? 0.9 : 0.6);
+    }
+    Rectangle {
+        x: size * 0.17; y: size * 0.17;
+        width: size * 0.66; height: size * 0.66;
+        border-radius: self.width / 2;
+        border-width: 1.2px;
+        border-color: C.ember.with-alpha(0.55);
+    }
+    Rectangle {
+        width: max(3px, size * 0.12); height: self.width;
+        border-radius: self.width / 2;
+        background: C.ember;
+        x: size / 2 + cos(a) * size * 0.33 - self.width / 2;
+        y: size / 2 + sin(a) * size * 0.33 - self.width / 2;
+    }
+    Rectangle {
+        x: size * 0.32; y: size * 0.32;
+        width: size * 0.36; height: size * 0.36;
+        border-radius: self.width / 2;
+        background: C.crimson;
+    }
+}
+
+// Themed single-line text field (std LineEdit doesn't match the palette).
+export component Field inherits Rectangle {
+    in-out property <string> text <=> ti.text;
+    in property <string> placeholder;
+    in property <bool> mono;
+    in property <bool> invalid;
+    in property <length> font-size: 15px;
+    in property <bool> password;
+    callback accepted(string);
+    callback edited(string);
+    forward-focus: ti;
+    public function focus-input() { ti.focus(); }
+    out property <bool> has-focus: ti.has-focus;
+    height: 36px;
+    border-radius: 10px;
+    background: C.field;
+    border-width: 1px;
+    border-color: invalid ? C.crimson : ti.has-focus ? C.ember.with-alpha(0.7) : C.line2;
+    animate border-color { duration: 120ms; }
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        @children
+        Rectangle {
+            horizontal-stretch: 1;
+            Text {
+                x: 0; width: 100%;
+                visible: ti.text == "";
+                text: placeholder;
+                color: C.dim;
+                font-family: mono ? C.mono : C.ui;
+                font-size: root.font-size;
+                font-weight: 500;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            ti := TextInput {
+                width: 100%;
+                height: 100%;
+                vertical-alignment: center;
+                single-line: true;
+                color: C.text;
+                font-family: mono ? C.mono : C.ui;
+                font-size: root.font-size;
+                font-weight: 500;
+                selection-background-color: C.ember.with-alpha(0.35);
+                selection-foreground-color: C.text;
+                input-type: password ? InputType.password : InputType.text;
+                accepted => { root.accepted(self.text); }
+                edited => { root.edited(self.text); }
+            }
+        }
+    }
+}
+
+export component Check inherits Rectangle {
+    in property <bool> checked;
+    in property <string> text;
+    callback toggled();
+    height: 26px;
+    accessible-role: checkbox;
+    accessible-checked: checked;
+    accessible-label: text;
+    HorizontalLayout {
+        spacing: 10px;
+        alignment: start;
+        Rectangle {
+            y: (parent.height - 18px) / 2;
+            width: 18px; height: 18px;
+            border-radius: 4px;
+            background: checked ? C.ember : C.field;
+            border-width: 1px;
+            border-color: checked ? C.ember : C.line2;
+            if checked : Icon { x: 2px; y: 2px; name: "check"; size: 14px; weight: 3; color: #0A0B0D; }
+        }
+        Text { text: root.text; font-family: C.ui; font-size: 16px; font-weight: 500; color: C.text; vertical-alignment: center; }
+    }
+    TouchArea { mouse-cursor: pointer; clicked => { root.toggled(); } }
+}
+
+export component Kbd inherits Rectangle {
+    in property <string> text;
+    width: t.preferred-width + 12px;
+    height: 18px;
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: C.line2;
+    t := Text { text: root.text; font-family: C.mono; font-size: 11px; color: C.muted; }
+}
+
+// Selectable option tile used across the wizard.
+export component OptTile inherits Rectangle {
+    in property <bool> selected;
+    callback clicked();
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: selected ? C.ember : ta.has-hover ? C.line2 : C.line;
+    background: selected ? #FF7A3D12 : C.field;
+    animate border-color, background { duration: 120ms; }
+    @children
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+// A modal backdrop: dims everything and swallows clicks.
+export component Backdrop inherits Rectangle {
+    callback dismiss();
+    background: #050607BD;
+    TouchArea { clicked => { root.dismiss(); } }
+    @children
+}

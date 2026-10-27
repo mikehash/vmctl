@@ -1,0 +1,190 @@
+// Data contract between Rust and the UI. Everything the window shows lives in
+// the `App` global; Rust fills it, callbacks go back to Rust. No business
+// logic here — guards, plans and commands are all computed in vmctl-core.
+
+export struct KV { k: string, v: string }
+
+export struct VmRow {
+    name: string,
+    os: string,
+    kind: string,   // Running | Stopped | Suspended | Locked | Other
+    label: string,  // Running (4182)
+    res: string,    // 2 vCPU · 4G
+    count: int,     // snapshot count (timeline chips)
+}
+
+export struct SnapRow { name: string, when: string, size: string, safety: bool, latest: bool }
+
+export struct LogRow { time: string, code: int, cmd: string, stderr: string, source: string }
+
+export struct Detail {
+    name: string,
+    kind: string,
+    label: string,
+    subtitle: string,
+    sugg-kind: string,
+    sugg-label: string,
+    sugg-text: string,
+    sugg-cmd: string,
+    console-title: string,
+    console-sub: string,
+    console-lines: [string],
+    config: [KV],
+    snaps: [SnapRow],
+    log: [LogRow],
+    can-start: bool,
+    start-label: string,
+    can-stop: bool,
+    can-restart: bool,
+    can-suspend: bool,
+    can-console: bool,
+    can-snapshot: bool,
+    can-clone: bool,
+    can-poweroff: bool,
+    can-destroy: bool,
+    can-rollback: bool,
+    autostart: bool,
+    why-disabled: string,
+}
+
+export struct ChipRow { k: string, v: string, filled: bool }
+export struct StepRow { title: string, cmd: string, effect: string, undo: string, status: string, code: int, stderr: string }
+
+export struct MsgRow {
+    id: int,
+    user: bool,
+    text: string,
+    stderr: string,
+    chips: [ChipRow],
+    code: [string],
+    steps: [StepRow],
+    skipped: string,
+    risk: string,
+    touches: string,
+    mem-after: string,
+    tail: string,
+    follow: [string],
+    phase: string,  // idle | running | done | failed | cancelled | none
+    active: bool,
+}
+
+export struct SwitchRow { name: string, kind: string, iface: string, desc: string, members: [VmRow] }
+export struct DsRow { name: string, kind: string, path: string, free: string, pct: float, machines: int }
+export struct IsoRow { name: string, size: string, dir: string }
+export struct TplRow { id: string, title: string, mono: string, accent: color, loader: string, cpu: int, mem-g: int, spec: string }
+
+export struct ToastData { shown: bool, code: int, cmd: string, stderr: string }
+
+export struct WizSpec {
+    tpl: string,
+    cpu: int,
+    mem-g: int,
+    disk-g: int,
+    ds: string,
+    sw: string,
+    iso: string,
+    name: string,
+    install: bool,
+    autostart: bool,
+}
+
+export global App {
+    // ── host ──
+    in property <string> host-name;
+    in property <string> host-os;
+    in property <string> vm-version;
+    in property <string> user;
+    in property <string> privilege;      // root | sudo | none
+    in property <bool> demo;
+    in property <int> threads: 1;
+    in property <float> mem-g: 1;
+    in property <int> alloc-cpu;
+    in property <float> alloc-mem-g;
+    in property <string> list-error;     // stderr of a failed `vm list`
+    in property <string> status-left;
+    in property <string> status-ds;
+    in property <string> status-sw;
+    in property <string> status-last;
+    in property <bool> busy;
+
+    // ── navigation / selection ──
+    in-out property <string> view: "machines";
+    in-out property <string> filter: "all";
+    in-out property <string> search;
+    in property <string> selected;
+    in property <[VmRow]> vms;          // filtered list
+    in property <int> count-all;
+    in property <int> count-running;
+    in property <int> count-stopped;
+    in property <int> count-other;
+    in property <int> snap-total;
+    in property <int> log-total;
+    in property <bool> has-detail;
+    in property <Detail> detail;
+    in property <[VmRow]> snap-vms;     // all guests for the timeline chips
+
+    // ── other views ──
+    in property <[SwitchRow]> switches;
+    in property <[DsRow]> datastores;
+    in property <[IsoRow]> isos;
+    in property <[LogRow]> activity;
+    in property <[TplRow]> templates;
+
+    // ── assistant ──
+    in-out property <bool> drawer;
+    in property <[MsgRow]> msgs;
+    in property <bool> runner-busy;
+    in property <[string]> examples;
+    in property <int> msgs-serial;      // bumps when messages change (autoscroll)
+
+    // ── modals (in App so Rust can open them too) ──
+    in-out property <bool> wizard-open;
+    in-out property <string> confirm-kind;
+    in-out property <string> confirm-name;
+    in-out property <string> confirm-snap;
+
+    // ── toast ──
+    in property <ToastData> toast;
+
+    // ── console ──
+    in property <bool> console-open;
+    in property <string> console-name;
+    in property <string> console-dev;
+    in property <string> console-text;
+    in property <string> console-status;
+    in property <bool> console-alive;
+
+    // ── callbacks ──
+    callback select(string);
+    callback set-filter(string);
+    callback search-changed(string);
+    callback set-view(string);
+    callback act(string, string);                 // op, guest
+    callback primary(string);
+    callback ask(string);
+    callback run-plan(int);
+    callback cancel-plan(int);
+    callback dismiss-toast();
+    callback refresh();
+    callback reprobe();
+    callback clone-latest(string);
+    callback clone-snap(string, string);
+    callback snapshot-now(string);
+    callback toggle-autostart(string);
+    // confirm
+    pure callback confirm-preview(string, string, string, bool) -> [string];
+    callback confirm-run(string, string, string, bool);
+    // wizard
+    pure callback suggest-name(string) -> string;
+    pure callback template-title(string) -> string;
+    pure callback name-error(string) -> string;
+    pure callback wizard-cmds(WizSpec) -> [string];
+    callback wizard-create(WizSpec);
+    // network
+    callback switch-create(string, bool);
+    pure callback switch-name-error(string) -> string;
+    // console
+    callback console-key(string, bool);
+    callback console-close();
+    callback console-external(string);
+}

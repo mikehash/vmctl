@@ -1,0 +1,635 @@
+// Main-area views: Machines (list + detail), Snapshots, Switches & storage, Activity.
+
+import { ScrollView, ListView } from "std-widgets.slint";
+import { C, Icon } from "theme.slint";
+import { Btn, Label, Mono, UiText, Heading, Card, Divider, Dot, Pill, ExitBadge, Orb, Field, OptTile } from "widgets.slint";
+import { App, VmRow, SnapRow, LogRow, KV } from "state.slint";
+
+// ───────────────────────── machine list ─────────────────────────
+
+component FilterTab inherits Rectangle {
+    in property <string> id;
+    in property <string> text;
+    property <bool> on: App.filter == id;
+    height: 30px;
+    width: t.preferred-width + 20px;
+    border-radius: 7px;
+    border-width: 1px;
+    border-color: on ? C.line2 : transparent;
+    background: on ? C.raised : ta.has-hover ? #FFFFFF08 : transparent;
+    t := Text { text: root.text; font-family: C.ui; font-weight: 600; font-size: 14px; color: on ? C.text : C.sub; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { App.set-filter(id); } }
+}
+
+component VmListItem inherits Rectangle {
+    in property <VmRow> vm;
+    property <bool> sel: App.selected == vm.name;
+    height: 62px;
+    border-radius: 10px;
+    background: sel ? C.raised : ta.has-hover ? #FFFFFF06 : transparent;
+    border-width: 1px;
+    border-color: sel ? C.line2 : transparent;
+    animate background { duration: 120ms; }
+    accessible-role: list-item;
+    accessible-label: vm.name + ", " + vm.label;
+    VerticalLayout {
+        padding: 12px;
+        spacing: 4px;
+        HorizontalLayout {
+            spacing: 8px;
+            Rectangle { width: 8px; Dot { y: (parent.height - 8px) / 2; background: C.state-color(vm.kind); } }
+            Mono { text: vm.name; font-size: 14px; overflow: elide; horizontal-stretch: 1; }
+            Text { text: vm.kind; font-family: C.ui; font-size: 13px; font-weight: 700; color: C.state-color(vm.kind); vertical-alignment: center; }
+        }
+        HorizontalLayout {
+            padding-left: 16px;
+            spacing: 8px;
+            Text { text: vm.os; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.muted; vertical-alignment: center; }
+            Text { text: "·"; color: C.ghost; vertical-alignment: center; }
+            Mono { text: vm.res; font-size: 12px; color: C.muted; horizontal-stretch: 1; overflow: elide; }
+        }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { App.select(vm.name); } }
+}
+
+export component MachineList inherits Rectangle {
+    width: 316px;
+    background: C.panel;
+    callback ask(string);
+    Rectangle { x: parent.width - 1px; width: 1px; background: C.line; }
+    VerticalLayout {
+        HorizontalLayout {
+            padding: 16px;
+            padding-bottom: 10px;
+            Heading { text: "MACHINES"; horizontal-stretch: 1; }
+            Mono { text: App.count-running + " running"; font-size: 12px; color: C.muted; }
+        }
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-bottom: 12px;
+            spacing: 4px;
+            alignment: start;
+            FilterTab { id: "all"; text: "All " + App.count-all; }
+            FilterTab { id: "running"; text: "Running"; }
+            FilterTab { id: "stopped"; text: "Stopped"; }
+            FilterTab { id: "other"; text: "Other"; }
+        }
+        ListView {
+            vertical-stretch: 1;
+            for vm in App.vms : Rectangle {
+                height: 64px;
+                VmListItem { x: 10px; width: parent.width - 20px; y: 1px; vm: vm; }
+            }
+        }
+        if App.vms.length == 0 : Text {
+            text: App.search != "" ? "No machines match \"" + App.search + "\"." : "No machines in this filter.";
+            font-family: C.ui; font-size: 15px; color: C.muted;
+            horizontal-alignment: center;
+        }
+        Rectangle { height: 1px; background: C.line; }
+        HorizontalLayout {
+            padding: 12px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 8px;
+            Btn { size: "sm"; text: "Start all"; horizontal-stretch: 1; enabled: App.privilege != "none"; clicked => { ask("start all stopped machines"); } }
+            Btn { size: "sm"; text: "Stop all"; horizontal-stretch: 1; enabled: App.privilege != "none"; clicked => { ask("stop all running machines"); } }
+        }
+    }
+}
+
+// ───────────────────────── detail ─────────────────────────
+
+component Sep inherits Rectangle { width: 1px; height: 24px; background: C.line; }
+
+component CardHead inherits HorizontalLayout {
+    in property <string> title;
+    spacing: 8px;
+    Label { text: title; color: C.sub; }
+    @children
+}
+
+component SnapLine inherits Rectangle {
+    in property <SnapRow> s;
+    in property <bool> enabled;
+    callback rollback();
+    height: 48px;
+    HorizontalLayout {
+        spacing: 10px;
+        Rectangle { width: 16px; Icon { y: (parent.height - 16px) / 2; name: "layers"; color: C.ember; weight: 1.8; } }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Mono { text: "@" + s.name; overflow: elide; }
+            Text { text: s.when + " · " + s.size; font-family: C.ui; font-size: 13px; font-weight: 500; color: C.muted; }
+        }
+        VerticalLayout { alignment: center; Btn { size: "sm"; text: "Rollback"; enabled: enabled; clicked => { rollback(); } } }
+    }
+    Divider { y: parent.height - 1px; }
+}
+
+export component LogLine inherits Rectangle {
+    in property <LogRow> l;
+    in property <bool> compact: true;
+    VerticalLayout {
+        padding-top: 5px;
+        padding-bottom: 5px;
+        spacing: 3px;
+        HorizontalLayout {
+            spacing: 10px;
+            Rectangle { width: badge.width; badge := ExitBadge { y: (parent.height - self.height) / 2; code: l.code; } }
+            Mono { text: l.cmd; font-size: 12.5px; overflow: elide; horizontal-stretch: 1; }
+            Mono { text: l.time; font-size: 11.5px; color: C.muted; }
+        }
+        if l.stderr != "" : HorizontalLayout {
+            padding-left: 54px;
+            Mono { text: l.stderr; font-size: 11.5px; color: C.err-text; wrap: word-wrap; }
+        }
+    }
+    Divider { y: parent.height - 1px; }
+}
+
+export component DetailView inherits Rectangle {
+    callback ask(string);
+    callback confirm(string, string, string); // kind, name, snap
+    callback open-snapshots();
+    property <bool> locked: App.detail.kind == "Locked";
+
+    ScrollView {
+        VerticalLayout {
+            padding-left: 24px;
+            padding-right: 24px;
+            padding-top: 22px;
+            padding-bottom: 22px;
+            spacing: 16px;
+
+            // title
+            VerticalLayout {
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 12px;
+                    alignment: start;
+                    Text { text: App.detail.name; font-family: C.mono; font-weight: 700; font-size: 26px; color: C.text; vertical-alignment: center; }
+                    Rectangle { width: pill.preferred-width; pill := Pill { y: (parent.height - self.height) / 2; kind: App.detail.kind; label: App.detail.label; } }
+                }
+                Text { text: App.detail.subtitle; font-family: C.ui; font-size: 15px; font-weight: 500; color: C.muted; }
+            }
+
+            // suggestion strip (F-403)
+            Rectangle {
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: C.line2;
+                background: C.field;
+                HorizontalLayout {
+                    padding: 12px;
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 14px;
+                    Rectangle { width: 30px; Orb { y: (parent.height - 30px) / 2; size: 30px; busy: App.busy; } }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: 2px;
+                        Label { text: "SUGGESTED NEXT STEP"; color: C.ember; }
+                        Text { text: App.detail.sugg-text; font-family: C.ui; font-size: 16px; font-weight: 500; color: C.text; wrap: word-wrap; }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Btn {
+                            kind: "primary";
+                            icon: App.detail.sugg-kind == "console" ? "term" : App.detail.sugg-kind == "explain" ? "spark" : "play";
+                            text: App.detail.sugg-label;
+                            enabled: App.detail.sugg-kind != "none" && (App.detail.sugg-kind == "explain" || App.privilege != "none");
+                            clicked => { App.primary(App.detail.name); }
+                        }
+                    }
+                }
+            }
+
+            // action bar
+            Rectangle {
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: C.line;
+                background: C.panel;
+                HorizontalLayout {
+                    padding: 8px;
+                    spacing: 8px;
+                    Btn { icon: "play"; icon-color: C.green; text: App.detail.start-label; enabled: App.detail.can-start; clicked => { App.act("start", App.detail.name); } }
+                    Btn { icon: "stop"; icon-color: C.crimson-text; text: "Stop"; enabled: App.detail.can-stop; clicked => { App.act("stop", App.detail.name); } }
+                    Btn { icon: "restart"; text: "Restart"; enabled: App.detail.can-restart; clicked => { App.act("restart", App.detail.name); } }
+                    Btn { icon: "pause"; icon-color: C.amber; text: "Suspend"; enabled: App.detail.can-suspend; clicked => { App.act("suspend", App.detail.name); } }
+                    Btn { icon: "term"; text: "Console"; enabled: App.detail.can-console; clicked => { App.act("console", App.detail.name); } }
+                    VerticalLayout { alignment: center; Sep { } }
+                    Btn { icon: "camera"; text: "Snapshot"; enabled: App.detail.can-snapshot; clicked => { App.snapshot-now(App.detail.name); } }
+                    Btn { icon: "copy"; text: "Clone"; enabled: App.detail.can-clone; clicked => { App.clone-latest(App.detail.name); } }
+                    Rectangle { horizontal-stretch: 1; }
+                    Btn { kind: "danger"; icon: "power"; text: "Power off"; enabled: App.detail.can-poweroff; clicked => { confirm("poweroff", App.detail.name, ""); } }
+                    Btn { kind: "danger"; icon: "trash"; hint: "Destroy"; enabled: App.detail.can-destroy; clicked => { confirm("destroy", App.detail.name, ""); } }
+                }
+            }
+            if App.detail.why-disabled != "" : HorizontalLayout {
+                spacing: 8px;
+                Rectangle { width: 14px; Icon { y: (parent.height - 14px) / 2; name: "alert"; size: 14px; color: C.amber; } }
+                Text { text: App.detail.why-disabled; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.muted; wrap: word-wrap; horizontal-stretch: 1; }
+            }
+
+            // cards
+            HorizontalLayout {
+                spacing: 16px;
+                VerticalLayout {
+                    spacing: 16px;
+                    horizontal-stretch: 1;
+                    width: (root.width - 48px - 16px - 16px) / 2;
+                    Card {
+                        CardHead {
+                            title: "CONFIGURATION";
+                            Rectangle { horizontal-stretch: 1; }
+                            Btn {
+                                size: "sm"; kind: "ghost";
+                                text: App.detail.autostart ? "Autostart: on" : "Autostart: off";
+                                enabled: !locked && App.privilege != "none";
+                                clicked => { App.toggle-autostart(App.detail.name); }
+                            }
+                        }
+                        VerticalLayout {
+                            for kv in App.detail.config : Rectangle {
+                                height: 33px;
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    Text { width: 96px; text: kv.k; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.muted; vertical-alignment: center; }
+                                    Mono { text: kv.v; overflow: elide; horizontal-stretch: 1; }
+                                }
+                                Divider { y: parent.height - 1px; }
+                            }
+                        }
+                    }
+                    Card {
+                        CardHead {
+                            title: "SNAPSHOTS";
+                            Rectangle { horizontal-stretch: 1; }
+                            Text {
+                                text: "Timeline"; font-family: C.ui; font-weight: 600; font-size: 14px; color: C.crimson-text; vertical-alignment: center;
+                                TouchArea { mouse-cursor: pointer; clicked => { open-snapshots(); } }
+                            }
+                        }
+                        if App.detail.snaps.length == 0 : Text {
+                            text: "No snapshots yet. Take one before risky changes, and rollback is one click.";
+                            font-family: C.ui; font-size: 15px; font-weight: 500; color: C.muted; wrap: word-wrap;
+                        }
+                        VerticalLayout {
+                            for s[i] in App.detail.snaps : SnapLine {
+                                visible: i < 3;
+                                height: i < 3 ? 48px : 0px;
+                                s: s;
+                                enabled: App.detail.can-rollback;
+                                rollback => { confirm("rollback", App.detail.name, s.name); }
+                            }
+                        }
+                    }
+                }
+                VerticalLayout {
+                    spacing: 16px;
+                    horizontal-stretch: 1;
+                    width: (root.width - 48px - 16px - 16px) / 2;
+                    Card {
+                        CardHead {
+                            title: "CONSOLE";
+                            Mono { text: App.detail.console-title; font-size: 12px; color: C.muted; overflow: elide; horizontal-stretch: 1; }
+                            Btn { size: "sm"; kind: "ghost"; text: "Open"; enabled: App.detail.can-console; clicked => { App.act("console", App.detail.name); } }
+                        }
+                        Rectangle {
+                            min-height: 200px;
+                            border-radius: 10px;
+                            background: C.sunk;
+                            border-width: 1px;
+                            border-color: C.line-soft;
+                            clip: true;
+                            VerticalLayout {
+                                padding: 12px;
+                                padding-left: 14px;
+                                spacing: 0px;
+                                alignment: start;
+                                Text { text: App.detail.console-sub; font-family: C.ui; font-size: 13px; font-weight: 600; color: C.muted; }
+                                for line in App.detail.console-lines : Text {
+                                    text: line;
+                                    font-family: C.mono; font-size: 12px; color: C.term-text;
+                                    overflow: elide;
+                                    height: 20px;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                    Card {
+                        CardHead {
+                            title: "ACTIVITY";
+                            Rectangle { horizontal-stretch: 1; }
+                            Text { text: "exact commands · real exit status"; font-family: C.ui; font-size: 13px; font-weight: 500; color: C.muted; vertical-alignment: center; }
+                        }
+                        if App.detail.log.length == 0 : Text { text: "No commands yet for this machine."; font-family: C.ui; font-size: 15px; font-weight: 500; color: C.muted; }
+                        VerticalLayout {
+                            for l in App.detail.log : LogLine { l: l; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ───────────────────────── snapshots ─────────────────────────
+
+export component SnapshotsView inherits Rectangle {
+    callback confirm(string, string, string);
+    property <bool> locked: App.detail.kind == "Locked";
+    ScrollView {
+        VerticalLayout {
+            padding-left: 26px;
+            padding-right: 26px;
+            padding-top: 22px;
+            padding-bottom: 22px;
+            spacing: 18px;
+            HorizontalLayout {
+                spacing: 12px;
+                Heading { text: "SNAPSHOTS"; font-size: 15px; letter-spacing: 3px; }
+                Rectangle { horizontal-stretch: 1; }
+                Btn { kind: "primary"; icon: "camera"; text: "Take snapshot"; enabled: App.detail.can-snapshot; clicked => { App.snapshot-now(App.detail.name); } }
+            }
+            // guest chips (wrap manually in rows of up to 6)
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                for v in App.snap-vms : Rectangle {
+                    property <bool> on: v.name == App.selected;
+                    height: 32px;
+                    width: row.preferred-width + 20px;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: on ? C.ember : C.line;
+                    background: on ? #FF7A3D12 : transparent;
+                    row := HorizontalLayout {
+                        x: 10px;
+                        spacing: 6px;
+                        Rectangle { width: 6px; Dot { y: (parent.height - 6px) / 2; size: 6px; background: C.state-color(v.kind); } }
+                        Mono { text: v.name; font-size: 12.5px; }
+                        Mono { text: v.count; font-size: 12.5px; color: C.muted; }
+                    }
+                    TouchArea { mouse-cursor: pointer; clicked => { App.select(v.name); } }
+                }
+            }
+            Rectangle {
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: C.line;
+                background: C.panel;
+                HorizontalLayout {
+                    padding: 12px;
+                    padding-left: 14px;
+                    spacing: 12px;
+                    Rectangle { width: 16px; Icon { y: (parent.height - 16px) / 2; name: "shield"; color: C.ember; } }
+                    VerticalLayout {
+                        UiText { text: "Safety net"; font-size: 16px; font-weight: 700; }
+                        Text { text: "Power off offers a snapshot first, ticked by default. Rollback uses vm rollback -r, which removes every newer snapshot — clone first if you want to keep them."; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.muted; wrap: word-wrap; }
+                    }
+                }
+            }
+            if App.has-detail : VerticalLayout {
+                // "now" node
+                HorizontalLayout {
+                    spacing: 16px;
+                    Rectangle {
+                        width: 20px;
+                        Dot { x: 3px; y: 6px; size: 14px; background: C.state-color(App.detail.kind); }
+                        if App.detail.snaps.length > 0 : Rectangle { x: 9px; y: 22px; width: 2px; height: parent.height - 22px; background: C.line; }
+                    }
+                    VerticalLayout {
+                        padding-bottom: 18px;
+                        UiText { text: "Now · " + App.detail.label; font-size: 17px; font-weight: 700; }
+                        Text { text: "Live disk of " + App.detail.name; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.muted; }
+                    }
+                }
+                for s[i] in App.detail.snaps : HorizontalLayout {
+                    spacing: 16px;
+                    Rectangle {
+                        width: 20px;
+                        Rectangle { x: 9px; width: 2px; height: i < App.detail.snaps.length - 1 ? parent.height : 22px; background: C.line; }
+                        Rectangle { x: 3px; y: 22px; width: 14px; height: 14px; border-radius: 7px; border-width: 2px; border-color: s.latest ? C.ember : C.ghost; background: C.bg; }
+                    }
+                    VerticalLayout {
+                        padding-bottom: 10px;
+                        horizontal-stretch: 1;
+                        Rectangle {
+                            border-radius: 12px;
+                            border-width: 1px;
+                            border-color: C.line;
+                            background: C.panel;
+                            HorizontalLayout {
+                                padding: 14px;
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                spacing: 12px;
+                                VerticalLayout {
+                                    spacing: 2px;
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+                                        Mono { text: "@" + s.name; font-size: 15px; font-weight: 700; }
+                                        if s.safety : Rectangle {
+                                            width: sn.preferred-width + 12px; height: 20px; border-radius: 5px; background: C.raised;
+                                            sn := Text { text: "SAFETY NET"; font-family: C.ui; font-size: 12px; font-weight: 700; letter-spacing: 1.2px; color: C.sub; }
+                                        }
+                                    }
+                                    Text { text: s.when + " · " + s.size; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.muted; }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                VerticalLayout { alignment: center; Btn { size: "sm"; icon: "rollback"; text: "Rollback"; enabled: App.detail.can-rollback; clicked => { confirm("rollback", App.detail.name, s.name); } } }
+                                VerticalLayout { alignment: center; Btn { size: "sm"; icon: "copy"; text: "Clone"; enabled: !locked && App.privilege != "none"; clicked => { App.clone-snap(App.detail.name, s.name); } } }
+                                VerticalLayout { alignment: center; Btn { size: "sm"; kind: "danger"; icon: "trash"; hint: "Delete snapshot"; enabled: !locked && App.privilege != "none"; clicked => { confirm("snapdelete", App.detail.name, s.name); } } }
+                            }
+                        }
+                    }
+                }
+                if App.detail.snaps.length == 0 : Text {
+                    x: 36px;
+                    text: "No snapshots for " + App.detail.name + " yet.";
+                    font-family: C.ui; font-size: 15px; font-weight: 500; color: C.muted;
+                }
+            }
+        }
+    }
+}
+
+// ───────────────────────── switches & storage ─────────────────────────
+
+export component NetworkView inherits Rectangle {
+    property <bool> adding;
+    property <bool> new-private;
+    property <string> new-name;
+    ScrollView {
+        HorizontalLayout {
+            padding-left: 26px;
+            padding-right: 26px;
+            padding-top: 22px;
+            padding-bottom: 22px;
+            spacing: 24px;
+            alignment: stretch;
+            VerticalLayout {
+                spacing: 12px;
+                alignment: start;
+                width: (root.width - 52px - 24px - 16px) / 2;
+                HorizontalLayout {
+                    Heading { text: "SWITCHES"; horizontal-stretch: 1; }
+                    Btn { size: "sm"; icon: adding ? "x" : "plus"; text: adding ? "Cancel" : "New switch"; enabled: App.privilege != "none"; clicked => { adding = !adding; new-name = ""; } }
+                }
+                if adding : Card {
+                    Label { text: "NEW SWITCH"; color: C.sub; }
+                    nf := Field {
+                        placeholder: "name, e.g. lan0";
+                        mono: true;
+                        invalid: new-name != "" && App.switch-name-error(new-name) != "";
+                        edited(t) => { new-name = t; }
+                        init => { self.focus-input(); }
+                    }
+                    if new-name != "" && App.switch-name-error(new-name) != "" : Text { text: App.switch-name-error(new-name); font-family: C.ui; font-size: 14px; color: C.crimson-text; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        OptTile { height: 36px; horizontal-stretch: 1; selected: !new-private; clicked => { new-private = false; } UiText { x: 12px; text: "standard"; font-size: 14px; } }
+                        OptTile { height: 36px; horizontal-stretch: 1; selected: new-private; clicked => { new-private = true; } UiText { x: 12px; text: "private (no guest-to-guest)"; font-size: 14px; } }
+                    }
+                    Mono { text: "$ vm switch create " + (new-private ? "-p " : "") + (new-name == "" ? "<name>" : new-name); font-size: 12.5px; color: C.sub; }
+                    HorizontalLayout {
+                        alignment: end;
+                        Btn { kind: "primary"; text: "Create switch"; enabled: new-name != "" && App.switch-name-error(new-name) == ""; clicked => { App.switch-create(new-name, new-private); adding = false; } }
+                    }
+                }
+                if App.switches.length == 0 : Text { text: "No virtual switches. Guests need one to reach the network."; font-family: C.ui; font-size: 15px; color: C.muted; wrap: word-wrap; }
+                for w in App.switches : Card {
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Mono { text: w.name; font-size: 16px; font-weight: 700; }
+                        Text { text: w.kind + " · " + w.iface; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.muted; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                    }
+                    Text { text: w.desc; font-family: C.ui; font-size: 15px; font-weight: 500; color: C.sub; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        if w.members.length == 0 : Text { text: "No machines attached"; font-family: C.ui; font-size: 14px; color: C.muted; }
+                        for v in w.members : Rectangle {
+                            height: 24px;
+                            width: mr.preferred-width + 16px;
+                            border-radius: 6px;
+                            background: C.raised;
+                            mr := HorizontalLayout {
+                                x: 8px;
+                                spacing: 6px;
+                                Rectangle { width: 6px; Dot { y: (parent.height - 6px) / 2; size: 6px; background: C.state-color(v.kind); } }
+                                Mono { text: v.name; font-size: 12px; color: v.kind == "Running" ? C.text : C.muted; }
+                            }
+                        }
+                    }
+                }
+            }
+            VerticalLayout {
+                spacing: 12px;
+                alignment: start;
+                width: (root.width - 52px - 24px - 16px) / 2;
+                Heading { text: "DATASTORES"; height: 30px; }
+                for d in App.datastores : Card {
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Mono { text: d.name; font-size: 16px; font-weight: 700; }
+                        Mono { text: d.path; font-size: 12px; color: C.muted; horizontal-stretch: 1; overflow: elide; }
+                        Text { text: d.free + " free"; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.sub; vertical-alignment: center; }
+                    }
+                    Rectangle {
+                        height: 6px; border-radius: 3px; background: C.line;
+                        Rectangle { x: 0; width: parent.width * min(1, d.pct / 100); border-radius: 3px; background: d.pct > 70 ? C.amber : C.muted; }
+                    }
+                    Text { text: d.kind + " · " + d.machines + " machines · " + round(d.pct) + "% used"; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.muted; }
+                }
+                Heading { text: "ISO LIBRARY"; height: 40px; vertical-alignment: bottom; }
+                Card {
+                    gap: 0px;
+                    pad: 14px;
+                    if App.isos.length == 0 : Text { text: "No install media found. Drop .iso files into the datastore's .iso folder or ~/installers."; font-family: C.ui; font-size: 14px; color: C.muted; wrap: word-wrap; }
+                    for i in App.isos : Rectangle {
+                        height: 32px;
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Rectangle { width: 15px; Icon { y: (parent.height - 15px) / 2; name: "disc"; size: 15px; color: C.muted; weight: 1.8; } }
+                            Mono { text: i.name; font-size: 12.5px; horizontal-stretch: 1; overflow: elide; }
+                            Mono { text: i.dir; font-size: 11px; color: C.dim; }
+                            Mono { text: i.size; font-size: 12px; color: C.muted; width: 60px; horizontal-alignment: right; }
+                        }
+                        Divider { y: parent.height - 1px; }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ───────────────────────── activity ─────────────────────────
+
+export component ActivityView inherits Rectangle {
+    VerticalLayout {
+        padding-left: 26px;
+        padding-right: 26px;
+        padding-top: 22px;
+        padding-bottom: 22px;
+        spacing: 14px;
+        HorizontalLayout {
+            spacing: 12px;
+            Heading { text: "ACTIVITY"; font-size: 15px; letter-spacing: 3px; }
+            Text { text: "Every command from both front-ends, with its real exit status and stderr."; font-family: C.ui; font-size: 15px; font-weight: 500; color: C.muted; vertical-alignment: center; horizontal-stretch: 1; }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            background: C.panel;
+            border-width: 1px;
+            border-color: C.line;
+            border-radius: 14px;
+            clip: true;
+            VerticalLayout {
+                HorizontalLayout {
+                    padding: 10px;
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 12px;
+                    Label { text: "TIME"; width: 130px; }
+                    Label { text: "EXIT"; width: 60px; }
+                    Label { text: "COMMAND"; horizontal-stretch: 1; }
+                    Label { text: "FROM"; width: 70px; }
+                }
+                Rectangle { height: 1px; background: C.line; }
+                if App.activity.length == 0 : Text { height: 60px; text: "Nothing has run yet."; font-family: C.ui; font-size: 15px; color: C.muted; horizontal-alignment: center; }
+                ListView {
+                    vertical-stretch: 1;
+                    for l in App.activity : Rectangle {
+                        VerticalLayout {
+                            padding: 9px;
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 3px;
+                            HorizontalLayout {
+                                spacing: 12px;
+                                Mono { text: l.time; font-size: 12.5px; color: C.muted; width: 130px; }
+                                Rectangle { width: 60px; ExitBadge { x: 0; code: l.code; } }
+                                Mono { text: l.cmd; horizontal-stretch: 1; overflow: elide; }
+                                Mono { text: l.source; font-size: 12px; color: C.dim; width: 70px; }
+                            }
+                            if l.stderr != "" : HorizontalLayout {
+                                padding-left: 214px;
+                                Mono { text: l.stderr; font-size: 12px; color: C.err-text; wrap: word-wrap; }
+                            }
+                        }
+                        Divider { y: parent.height - 1px; }
+                    }
+                }
+            }
+        }
+    }
+}

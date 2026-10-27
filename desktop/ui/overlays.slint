@@ -1,0 +1,826 @@
+// Overlays: assistant drawer, new-machine wizard, destructive confirm,
+// embedded console, toast.
+
+import { ScrollView } from "std-widgets.slint";
+import { C, Icon } from "theme.slint";
+import { Btn, Label, Mono, UiText, Heading, Card, Divider, Dot, ExitBadge, Orb, Hex, Field, Check, OptTile, Backdrop, Kbd } from "widgets.slint";
+import { App, MsgRow, StepRow, ChipRow, WizSpec } from "state.slint";
+
+// ───────────────────────── assistant ─────────────────────────
+
+component PlanCard inherits Rectangle {
+    in property <MsgRow> m;
+    border-radius: 14px;
+    border-width: 1px;
+    border-color: C.line2;
+    background: C.surface;
+    property <string> badge: m.phase == "running" ? "RUNNING" : m.phase == "done" ? "COMPLETED" : m.phase == "failed" ? "STOPPED AT FAILURE" : m.phase == "cancelled" ? "CANCELLED" : "AWAITING CONFIRM";
+    property <color> badge-c: m.phase == "done" ? C.green : m.phase == "failed" ? C.crimson-text : m.phase == "cancelled" ? C.muted : C.ember;
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+        HorizontalLayout {
+            Label { text: "PLAN · " + m.steps.length + (m.steps.length == 1 ? " COMMAND" : " COMMANDS"); color: C.sub; horizontal-stretch: 1; }
+            Text { text: badge; font-family: C.ui; font-weight: 700; font-size: 12px; letter-spacing: 1px; color: badge-c; vertical-alignment: center; }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            for kv[i] in [{k: "Risk", v: m.risk}, {k: "Touches", v: m.touches}, {k: "Memory after", v: m.mem-after}] : Rectangle {
+                horizontal-stretch: 1;
+                height: 48px;
+                border-radius: 8px;
+                background: C.panel;
+                border-width: 1px;
+                border-color: C.line;
+                VerticalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    alignment: center;
+                    Text { text: kv.k; font-family: C.ui; font-size: 12px; font-weight: 500; color: C.muted; }
+                    Text { text: kv.v; font-family: C.ui; font-size: 15px; font-weight: 700; overflow: elide; color: i == 0 ? (kv.v == "Low" ? C.green : C.amber) : C.text; }
+                }
+            }
+        }
+        for s[i] in m.steps : Rectangle {
+            border-radius: 10px;
+            background: C.panel;
+            border-width: 1px;
+            border-color: s.status == "run" ? C.ember : s.status == "fail" ? #FF4D6380 : C.line;
+            VerticalLayout {
+                padding: 10px;
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Rectangle {
+                        width: 22px; height: 22px; border-radius: 11px;
+                        background: s.status == "ok" ? #34D39924 : s.status == "fail" ? #FF4D6329 : s.status == "run" ? C.crimson : C.raised;
+                        Text {
+                            text: s.status == "ok" ? "✓" : s.status == "fail" ? "✕" : i + 1;
+                            font-family: C.mono; font-size: 11px; font-weight: 700;
+                            color: s.status == "ok" ? C.green : s.status == "fail" ? C.crimson-text : s.status == "run" ? #FFFFFF : C.muted;
+                        }
+                    }
+                    UiText { text: s.title; font-weight: 700; horizontal-stretch: 1; overflow: elide; }
+                    if s.status == "ok" || s.status == "fail" : Rectangle { width: eb.width; eb := ExitBadge { y: (parent.height - self.height) / 2; code: s.code; } }
+                    if s.status == "run" : Mono { text: "running…"; font-size: 11px; color: C.ember; }
+                    if s.status == "wait" : Mono { text: "pending"; font-size: 11px; color: C.dim; }
+                    if s.status == "skip" : Mono { text: "not run"; font-size: 11px; color: C.dim; }
+                }
+                Rectangle {
+                    border-radius: 7px;
+                    background: C.sunk;
+                    HorizontalLayout { padding: 7px; padding-left: 9px; Mono { text: s.cmd; font-size: 12px; wrap: word-wrap; } }
+                }
+                if s.stderr != "" : Rectangle {
+                    border-radius: 7px;
+                    background: C.sunk;
+                    border-width: 1px;
+                    border-color: #FF4D6359;
+                    HorizontalLayout { padding: 7px; padding-left: 9px; Mono { text: s.stderr; font-size: 12px; color: C.err-text; wrap: word-wrap; } }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text { text: s.effect; font-family: C.ui; font-size: 13px; font-weight: 500; color: C.muted; horizontal-stretch: 1; overflow: elide; }
+                    Text { text: "undo"; font-family: C.ui; font-size: 13px; font-weight: 500; color: C.muted; }
+                    Mono { text: s.undo; font-size: 11px; color: C.sub; overflow: elide; max-width: 200px; }
+                }
+            }
+        }
+        if m.skipped != "" : Text { text: "Skipped: " + m.skipped; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.muted; wrap: word-wrap; }
+        if m.active && m.phase == "idle" : HorizontalLayout {
+            spacing: 8px;
+            Btn { kind: "primary"; text: "Run plan"; horizontal-stretch: 1; enabled: !App.runner-busy; clicked => { App.run-plan(m.id); } }
+            Btn { kind: "ghost"; text: "Cancel"; clicked => { App.cancel-plan(m.id); } }
+        }
+        if m.phase == "failed" : Text { text: "Stopped at the first failure. Nothing after it ran."; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.sub; }
+    }
+}
+
+component Chip inherits Rectangle {
+    in property <ChipRow> c;
+    height: 28px;
+    width: row.preferred-width + 18px;
+    border-radius: 7px;
+    border-width: 1px;
+    border-color: c.filled ? C.ember.with-alpha(0.8) : C.line2;
+    background: c.filled ? transparent : C.surface;
+    row := HorizontalLayout {
+        x: 9px;
+        spacing: 5px;
+        Text { text: c.k; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.text; vertical-alignment: center; }
+        if c.v != "" : Text { text: c.v; font-family: C.ui; font-size: 14px; font-weight: 700; color: C.text; vertical-alignment: center; }
+    }
+}
+
+component AssistantMsg inherits HorizontalLayout {
+    in property <MsgRow> m;
+    in property <length> avail;
+    spacing: 10px;
+    alignment: start;
+    VerticalLayout { Orb { size: 22px; busy: m.phase == "running"; } }
+    VerticalLayout {
+        spacing: 10px;
+        width: avail - 32px;
+        Text { text: m.text; font-family: C.ui; font-size: 16px; font-weight: 500; color: C.text; wrap: word-wrap; }
+        if m.stderr != "" : Rectangle {
+            border-radius: 8px; background: C.sunk; border-width: 1px; border-color: #FF4D6359;
+            HorizontalLayout { padding: 8px; padding-left: 10px; Mono { text: m.stderr; font-size: 12px; color: C.err-text; wrap: word-wrap; } }
+        }
+        // chips: rows of up to 4 (Slint has no flex-wrap)
+        if m.chips.length > 0 : VerticalLayout {
+            spacing: 6px;
+            for r in ceil(m.chips.length / 4) : HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                for c[j] in m.chips : Chip {
+                    visible: j >= r * 4 && j < r * 4 + 4;
+                    width: (j >= r * 4 && j < r * 4 + 4) ? self.preferred-width : 0px;
+                    c: c;
+                }
+            }
+        }
+        if m.code.length > 0 : Rectangle {
+            border-radius: 8px; background: C.sunk;
+            VerticalLayout {
+                padding: 8px; padding-left: 10px; spacing: 2px;
+                for line in m.code : HorizontalLayout {
+                    Mono { text: "$ "; color: C.ember; font-size: 12.5px; }
+                    Mono { text: line; font-size: 12.5px; wrap: word-wrap; horizontal-stretch: 1; }
+                }
+            }
+        }
+        if m.steps.length > 0 : PlanCard { m: m; }
+        if m.tail != "" : Text { text: m.tail; font-family: C.ui; font-size: 16px; font-weight: 500; color: #C9CED6; wrap: word-wrap; }
+        if m.follow.length > 0 : VerticalLayout {
+            spacing: 6px;
+            alignment: start;
+            for f in m.follow : HorizontalLayout { alignment: start; Btn { size: "sm"; text: f; clicked => { App.ask(f); } } }
+        }
+        if m.active && m.phase == "done" : Text { text: "Done. Every command exited 0."; font-family: C.ui; font-size: 15px; font-weight: 600; color: C.green; }
+    }
+}
+
+export component Drawer inherits Rectangle {
+    width: 440px;
+    background: C.chrome;
+    property <length> content-w: self.width - 36px;
+    public function focus-input() { input.focus-input(); }
+    Rectangle { x: 0; width: 1px; background: C.line2; }
+    // swallow clicks so they don't fall through to the main view
+    TouchArea { }
+    VerticalLayout {
+        HorizontalLayout {
+            padding: 16px;
+            padding-left: 18px;
+            padding-right: 18px;
+            spacing: 10px;
+            Orb { size: 32px; busy: App.runner-busy; }
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                Heading { text: "ASSISTANT"; letter-spacing: 2.3px; }
+                Text { text: "Plans first. Runs nothing without you."; font-family: C.ui; font-size: 13px; font-weight: 500; color: C.muted; }
+            }
+            VerticalLayout { alignment: center; Btn { kind: "ghost"; size: "sm"; icon: "x"; hint: "Close assistant"; clicked => { App.drawer = false; } } }
+        }
+        Rectangle { height: 1px; background: C.line; }
+        if App.has-detail : HorizontalLayout {
+            padding-left: 18px;
+            padding-right: 18px;
+            padding-top: 12px;
+            Rectangle {
+                height: 36px;
+                border-radius: 9px;
+                background: C.surface;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 8px;
+                    Text { text: "Context"; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.sub; vertical-alignment: center; }
+                    Mono { text: App.detail.name; font-size: 12.5px; horizontal-stretch: 1; }
+                    Text { text: App.detail.kind; font-family: C.ui; font-size: 14px; font-weight: 700; color: C.state-color(App.detail.kind); vertical-alignment: center; }
+                }
+            }
+        }
+        sv := ScrollView {
+            vertical-stretch: 1;
+            property <int> serial: App.msgs-serial;
+            changed content-height => { self.content-y = min(0px, self.visible-height - self.content-height); }
+            VerticalLayout {
+                padding: 18px;
+                spacing: 14px;
+                for m in App.msgs : HorizontalLayout {
+                    alignment: m.user ? end : start;
+                    if m.user : Rectangle {
+                        max-width: content-w * 0.88;
+                        border-radius: 12px;
+                        background: C.raised;
+                        HorizontalLayout {
+                            padding: 9px;
+                            padding-left: 13px;
+                            padding-right: 13px;
+                            Text { text: m.text; font-family: C.ui; font-size: 16px; font-weight: 500; color: C.text; wrap: word-wrap; }
+                        }
+                    }
+                    if !m.user : AssistantMsg { m: m; avail: content-w; }
+                }
+                if App.msgs.length <= 2 : VerticalLayout {
+                    spacing: 6px;
+                    Label { text: "TRY ASKING"; }
+                    for q in App.examples : Rectangle {
+                        border-radius: 9px;
+                        border-width: 1px;
+                        border-color: qa.has-hover ? C.line2 : C.line;
+                        HorizontalLayout {
+                            padding: 9px;
+                            padding-left: 12px;
+                            Text { text: q; font-family: C.ui; font-size: 15px; font-weight: 500; color: C.text; wrap: word-wrap; }
+                        }
+                        qa := TouchArea { mouse-cursor: pointer; clicked => { App.ask(q); } }
+                    }
+                }
+            }
+        }
+        HorizontalLayout {
+            padding: 14px;
+            Rectangle {
+                height: 48px;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: input.has-focus ? C.ember.with-alpha(0.6) : C.line2;
+                background: C.field;
+                HorizontalLayout {
+                    padding: 6px;
+                    padding-left: 4px;
+                    spacing: 8px;
+                    input := Field {
+                        horizontal-stretch: 1;
+                        border-width: 0px;
+                        background: transparent;
+                        font-size: 16px;
+                        placeholder: "Ask in plain English…";
+                        accepted(t) => { App.ask(t); self.text = ""; }
+                    }
+                    Btn { kind: "primary"; size: "sm"; icon: "send"; hint: "Send"; clicked => { App.ask(input.text); input.text = ""; } }
+                }
+            }
+        }
+    }
+}
+
+// ───────────────────────── confirm ─────────────────────────
+
+export component ConfirmModal inherits Backdrop {
+    in property <string> kind;     // poweroff | rollback | destroy | snapdelete | unlock
+    in property <string> target;
+    in property <string> snap;
+    in-out property <bool> safety: true;
+    property <string> typed;
+    callback close();
+    dismiss => { close(); }
+    property <bool> can-run: kind != "destroy" || typed == target;
+    property <bool> eff-safety: safety && kind == "poweroff";
+    property <[string]> cmds: App.confirm-preview(kind, target, snap, eff-safety);
+    property <string> title: kind == "poweroff" ? "Power off " + target + "?" : kind == "rollback" ? "Roll back " + target + " to @" + snap + "?" : kind == "destroy" ? "Destroy " + target + "?" : "Delete @" + snap + "?";
+    property <string> body: kind == "poweroff" ? "Like pulling the plug. Anything the guest hasn't saved is lost."
+        : kind == "rollback" ? "Everything written after @" + snap + " is discarded. zfs rollback -r also destroys every newer snapshot, so a safety snapshot taken now would be destroyed too — clone first if you need to keep the current state."
+        : kind == "destroy" ? "Deletes the machine, its disk and all its snapshots. A snapshot can't save it, because it lives in the same dataset."
+        : "Removes the snapshot from every dataset of " + target + ". You can't roll back to it afterwards.";
+    property <string> verb: kind == "poweroff" ? "Power off" : kind == "rollback" ? "Roll back" : kind == "destroy" ? "Destroy" : "Delete";
+    forward-focus: fs;
+    fs := FocusScope {
+        key-pressed(e) => {
+            if e.text == Key.Escape { close(); return accept; }
+            if e.text == Key.Return && can-run && kind != "destroy" { App.confirm-run(kind, target, snap, eff-safety); close(); return accept; }
+            reject
+        }
+    }
+    Rectangle {
+        width: 500px;
+        height: lay.preferred-height;
+        border-radius: 18px;
+        background: C.panel;
+        border-width: 1px;
+        border-color: C.line2;
+        TouchArea { }
+        lay := VerticalLayout {
+            padding: 22px;
+            spacing: 16px;
+            HorizontalLayout {
+                spacing: 12px;
+                Rectangle {
+                    width: 40px; height: 40px; border-radius: 10px; background: #DC2F4529;
+                    Icon { name: kind == "destroy" || kind == "snapdelete" ? "trash" : kind == "rollback" ? "rollback" : "power"; color: C.crimson-text; }
+                }
+                VerticalLayout {
+                    spacing: 4px;
+                    UiText { text: title; font-size: 21px; font-weight: 700; wrap: word-wrap; }
+                    Text { text: body; font-family: C.ui; font-size: 15px; font-weight: 500; color: C.muted; wrap: word-wrap; }
+                }
+            }
+            VerticalLayout {
+                spacing: 6px;
+                Label { text: "WILL RUN"; }
+                Rectangle {
+                    border-radius: 8px;
+                    background: C.sunk;
+                    VerticalLayout {
+                        padding: 10px;
+                        padding-left: 12px;
+                        spacing: 4px;
+                        for c in cmds : HorizontalLayout {
+                            Mono { text: "$ "; font-size: 12.5px; color: C.dim; }
+                            Mono { text: c; font-size: 12.5px; color: c.starts-with("vm snapshot") ? C.ember : C.text; wrap: word-wrap; horizontal-stretch: 1; }
+                        }
+                    }
+                }
+            }
+            if kind == "poweroff" : Check {
+                checked: safety;
+                text: "Take a snapshot first so this can be undone";
+                toggled => { safety = !safety; }
+            }
+            if kind == "destroy" : VerticalLayout {
+                spacing: 6px;
+                HorizontalLayout {
+                    spacing: 5px;
+                    alignment: start;
+                    UiText { text: "Type"; font-weight: 500; }
+                    Mono { text: target; font-weight: 700; }
+                    UiText { text: "to confirm"; font-weight: 500; }
+                }
+                Field {
+                    height: 42px;
+                    mono: true;
+                    invalid: typed != "" && typed != target;
+                    edited(t) => { typed = t; }
+                    accepted => { if can-run { App.confirm-run(kind, target, snap, false); close(); } }
+                    init => { self.focus-input(); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: end;
+                Btn { text: "Cancel"; clicked => { close(); } }
+                Btn { kind: "primary"; text: verb; enabled: can-run; clicked => { App.confirm-run(kind, target, snap, eff-safety); close(); } }
+            }
+        }
+    }
+    init => { if kind != "destroy" { fs.focus(); } }
+}
+
+// ───────────────────────── wizard ─────────────────────────
+
+component WizHead inherits VerticalLayout {
+    in property <string> t;
+    in property <string> s;
+    spacing: 6px;
+    UiText { text: t; font-size: 28px; font-weight: 700; }
+    Text { text: s; font-family: C.ui; font-size: 16px; font-weight: 500; color: C.muted; wrap: word-wrap; }
+}
+
+component NumOpts inherits HorizontalLayout {
+    in property <[int]> opts;
+    in property <int> value;
+    in property <string> unit;
+    callback picked(int);
+    spacing: 8px;
+    alignment: start;
+    for v in opts : OptTile {
+        width: max(60px, t.preferred-width + 24px);
+        height: 44px;
+        border-radius: 10px;
+        selected: v == value;
+        clicked => { picked(v); }
+        t := Text { text: v + unit; font-family: C.mono; font-size: 15px; font-weight: 700; color: C.text; }
+    }
+}
+
+export component Wizard inherits Backdrop {
+    callback close();
+    dismiss => { close(); }
+    property <int> step: 0;
+    in-out property <WizSpec> f: {
+        tpl: App.templates.length > 0 ? App.templates[0].id : "",
+        cpu: App.templates.length > 0 ? App.templates[0].cpu : 1,
+        mem-g: App.templates.length > 0 ? App.templates[0].mem-g : 1,
+        disk-g: 20, ds: App.datastores.length > 0 ? App.datastores[0].name : "default",
+        sw: App.switches.length > 0 ? App.switches[0].name : "public",
+        iso: "", name: "", install: true, autostart: false,
+    };
+    property <string> eff-name: f.name != "" ? f.name : App.suggest-name(f.tpl);
+    property <string> name-err: App.name-error(eff-name);
+    property <WizSpec> spec: { tpl: f.tpl, cpu: f.cpu, mem-g: f.mem-g, disk-g: f.disk-g, ds: f.ds, sw: f.sw, iso: f.iso, name: eff-name, install: f.install && f.iso != "", autostart: f.autostart };
+    property <[string]> cmds: App.wizard-cmds(spec);
+    property <string> tpl-title: App.template-title(f.tpl);
+    property <[string]> steps: ["Template", "Resources", "Storage", "Network", "Summary"];
+    property <[string]> values: [tpl-title, f.cpu + " vCPU · " + f.mem-g + "G", f.disk-g + "G · " + f.ds, f.sw, eff-name];
+    property <float> used-g: App.alloc-mem-g;
+
+    forward-focus: fs;
+    fs := FocusScope {
+        key-pressed(e) => {
+            if e.text == Key.Escape { close(); return accept; }
+            if e.text == Key.Return {
+                if step < 4 { step += 1; } else if name-err == "" { App.wizard-create(spec); close(); }
+                return accept;
+            }
+            reject
+        }
+    }
+    init => { fs.focus(); }
+
+    property <length> card-w: min(1080px, root.width - 32px);
+    property <length> body-w: card-w - 230px - 52px - 16px;
+    Rectangle {
+        width: card-w;
+        height: min(720px, root.height - 32px);
+        border-radius: 18px;
+        background: C.panel;
+        border-width: 1px;
+        border-color: C.line2;
+        clip: true;
+        TouchArea { }
+        VerticalLayout {
+            // header
+            HorizontalLayout {
+                padding: 16px;
+                padding-left: 20px;
+                padding-right: 20px;
+                spacing: 12px;
+                VerticalLayout { alignment: center; Hex { size: 22px; } }
+                Heading { text: "NEW MACHINE"; font-size: 14px; letter-spacing: 2.8px; }
+                Text { text: "Step " + (step + 1) + " of 5"; font-family: C.ui; font-size: 15px; font-weight: 500; color: C.muted; vertical-alignment: center; horizontal-stretch: 1; }
+                Btn { kind: "ghost"; size: "sm"; icon: "x"; hint: "Close"; clicked => { close(); } }
+            }
+            Rectangle { height: 1px; background: C.line; }
+            HorizontalLayout {
+                vertical-stretch: 1;
+                // step rail
+                Rectangle {
+                    width: 230px;
+                    background: C.chrome;
+                    Rectangle { x: parent.width - 1px; width: 1px; background: C.line; }
+                    VerticalLayout {
+                        padding: 12px;
+                        padding-top: 18px;
+                        spacing: 4px;
+                        for s[i] in steps : Rectangle {
+                            height: 52px;
+                            border-radius: 10px;
+                            background: i == step ? C.raised : transparent;
+                            border-width: 1px;
+                            border-color: i == step ? C.line2 : transparent;
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                spacing: 12px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    Rectangle {
+                                        width: 28px; height: 28px; border-radius: 14px;
+                                        background: i == step ? C.crimson : i < step ? #34D39924 : C.raised;
+                                        Text { text: i < step ? "✓" : i + 1; font-family: C.mono; font-size: 12px; font-weight: 700; color: i == step ? #FFFFFF : i < step ? C.green : C.muted; }
+                                    }
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    Text { text: s; font-family: C.ui; font-size: 16px; font-weight: 700; color: i <= step ? C.text : C.muted; }
+                                    Mono { text: i <= step ? values[i] : "—"; font-size: 11.5px; color: C.muted; overflow: elide; }
+                                }
+                            }
+                            TouchArea { mouse-cursor: pointer; clicked => { step = i; } }
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                        Rectangle {
+                            border-radius: 10px;
+                            background: C.surface;
+                            HorizontalLayout {
+                                padding: 12px;
+                                Text { text: "Defaults come from the vm-bhyve template on this host. Change only what you need."; font-family: C.ui; font-size: 14px; font-weight: 500; color: C.sub; wrap: word-wrap; }
+                            }
+                        }
+                    }
+                }
+                // body
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    padding: 24px;
+                    padding-left: 26px;
+                    padding-right: 26px;
+                    spacing: 18px;
+                    ScrollView {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            spacing: 16px;
+                            alignment: start;
+                            if step == 0 : WizHead { t: "What are you running?"; s: "Pick a guest OS. These are the templates installed in this host's datastore."; }
+                            if step == 0 : VerticalLayout {
+                                spacing: 12px;
+                                for r in ceil(App.templates.length / 3) : HorizontalLayout {
+                                    spacing: 12px;
+                                    for x[j] in App.templates : OptTile {
+                                        visible: j >= r * 3 && j < r * 3 + 3;
+                                        width: (j >= r * 3 && j < r * 3 + 3) ? (body-w - 24px) / 3 : 0px;
+                                        height: 96px;
+                                        selected: f.tpl == x.id;
+                                        clicked => { f.tpl = x.id; f.cpu = x.cpu; f.mem-g = x.mem-g; f.name = ""; f.iso = ""; }
+                                        VerticalLayout {
+                                            padding: 16px;
+                                            spacing: 10px;
+                                            HorizontalLayout {
+                                                spacing: 10px;
+                                                Rectangle {
+                                                    width: 36px; height: 36px; border-radius: 9px; background: C.raised;
+                                                    Text { text: x.mono; font-family: C.display; font-weight: 800; font-size: 13px; color: x.accent; }
+                                                }
+                                                VerticalLayout {
+                                                    alignment: center;
+                                                    horizontal-stretch: 1;
+                                                    Text { text: x.title; font-family: C.ui; font-size: 18px; font-weight: 700; color: C.text; }
+                                                    Mono { text: "template: " + x.id; font-size: 11.5px; color: C.muted; }
+                                                }
+                                                if f.tpl == x.id : VerticalLayout { alignment: center; Icon { name: "check"; size: 20px; color: C.ember; weight: 2.6; } }
+                                            }
+                                            Mono { text: x.spec; font-size: 12px; color: C.sub; overflow: elide; }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if step == 1 : WizHead { t: "How much power?"; s: "Template default for " + tpl-title + " is pre-selected. Host has " + App.threads + " threads and " + round(App.mem-g) + "G."; }
+                            if step == 1 : Card {
+                                background: C.field;
+                                HorizontalLayout { Label { text: "VIRTUAL CPUS"; color: C.sub; horizontal-stretch: 1; } Mono { text: f.cpu; font-size: 22px; font-weight: 700; } }
+                                NumOpts { opts: [1, 2, 4, 6, 8, 12, 16]; value: f.cpu; picked(v) => { f.cpu = v; } }
+                                if f.cpu > App.threads : Text { text: "More vCPUs than host threads — the guest will be slow."; font-family: C.ui; font-size: 14px; color: C.amber; }
+                            }
+                            if step == 1 : Card {
+                                background: C.field;
+                                HorizontalLayout { Label { text: "MEMORY"; color: C.sub; horizontal-stretch: 1; } Mono { text: f.mem-g + "G"; font-size: 22px; font-weight: 700; } }
+                                NumOpts { opts: [1, 2, 4, 8, 16, 32]; unit: "G"; value: f.mem-g; picked(v) => { f.mem-g = v; } }
+                                Rectangle {
+                                    height: 8px; border-radius: 4px; background: C.line; clip: true;
+                                    Rectangle { x: 0; width: parent.width * min(1, used-g / App.mem-g); background: C.ghost; }
+                                    Rectangle { x: parent.width * min(1, used-g / App.mem-g); width: parent.width * max(0, min(1 - used-g / App.mem-g, f.mem-g / App.mem-g)); background: f.mem-g + used-g > App.mem-g ? C.crimson : C.ember; animate width { duration: 180ms; } }
+                                }
+                                HorizontalLayout {
+                                    spacing: 16px;
+                                    Text { text: "■ " + round(used-g * 10) / 10 + "G in use"; font-family: C.ui; font-size: 14px; color: C.muted; }
+                                    Text { text: "■ this machine"; font-family: C.ui; font-size: 14px; color: C.ember; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Text { text: round((App.mem-g - used-g - f.mem-g) * 10) / 10 + "G left on host"; font-family: C.ui; font-size: 14px; color: f.mem-g + used-g > App.mem-g ? C.crimson-text : C.muted; }
+                                }
+                            }
+
+                            if step == 2 : WizHead { t: "Where does it live?"; s: "Choose a datastore, a disk size, and the installer ISO."; }
+                            if step == 2 : HorizontalLayout {
+                                spacing: 12px;
+                                for d in App.datastores : OptTile {
+                                    horizontal-stretch: 1;
+                                    height: 112px;
+                                    selected: f.ds == d.name;
+                                    clicked => { f.ds = d.name; }
+                                    VerticalLayout {
+                                        padding: 16px;
+                                        spacing: 8px;
+                                        HorizontalLayout { spacing: 8px; alignment: start; Mono { text: d.name; font-size: 16px; font-weight: 700; } Text { text: d.kind; font-family: C.ui; font-size: 14px; color: C.muted; vertical-alignment: center; } }
+                                        Mono { text: d.path; font-size: 12px; color: C.sub; }
+                                        Rectangle { height: 4px; border-radius: 2px; background: C.line; Rectangle { x: 0; width: parent.width * min(1, d.pct / 100); border-radius: 2px; background: d.pct > 70 ? C.amber : C.muted; } }
+                                        Text { text: d.free + " free"; font-family: C.ui; font-size: 14px; color: C.muted; }
+                                    }
+                                }
+                            }
+                            if step == 2 : Card {
+                                background: C.field;
+                                HorizontalLayout { Label { text: "DISK SIZE"; color: C.sub; horizontal-stretch: 1; } Mono { text: f.disk-g + "G"; font-size: 22px; font-weight: 700; } }
+                                NumOpts { opts: [4, 8, 16, 20, 40, 64, 128]; unit: "G"; value: f.disk-g; picked(v) => { f.disk-g = v; } }
+                            }
+                            if step == 2 : Card {
+                                background: C.field;
+                                gap: 6px;
+                                HorizontalLayout { Label { text: "INSTALL MEDIA"; color: C.sub; horizontal-stretch: 1; } Mono { text: f.iso == "" ? "none" : ""; font-size: 12px; color: C.muted; } }
+                                if App.isos.length == 0 : Text { text: "No ISOs found. Drop one into the datastore's .iso folder or ~/installers, or create without installing."; font-family: C.ui; font-size: 14px; color: C.muted; wrap: word-wrap; }
+                                OptTile {
+                                    height: 38px;
+                                    selected: f.iso == "";
+                                    clicked => { f.iso = ""; }
+                                    HorizontalLayout { padding-left: 12px; spacing: 10px; UiText { text: "No installer — create the disk only"; font-size: 14px; } }
+                                }
+                                for i in App.isos : OptTile {
+                                    height: 38px;
+                                    selected: f.iso == i.name;
+                                    clicked => { f.iso = i.name; }
+                                    HorizontalLayout {
+                                        padding-left: 12px;
+                                        padding-right: 12px;
+                                        spacing: 10px;
+                                        VerticalLayout { alignment: center; Icon { name: "disc"; size: 16px; color: f.iso == i.name ? C.ember : C.muted; weight: 1.8; } }
+                                        Mono { text: i.name; font-size: 13px; horizontal-stretch: 1; overflow: elide; }
+                                        Mono { text: i.dir; font-size: 11px; color: C.dim; }
+                                        Mono { text: i.size; font-size: 12px; color: C.muted; }
+                                    }
+                                }
+                            }
+
+                            if step == 3 : WizHead { t: "How does it connect?"; s: "Attach the first NIC to a virtual switch. Add more NICs later."; }
+                            if step == 3 && App.switches.length == 0 : Text { text: "This host has no virtual switches. Create one under Switches & storage first — the guest will have no network until then."; font-family: C.ui; font-size: 15px; color: C.amber; wrap: word-wrap; }
+                            if step == 3 : VerticalLayout {
+                                spacing: 10px;
+                                for w in App.switches : OptTile {
+                                    height: 74px;
+                                    selected: f.sw == w.name;
+                                    clicked => { f.sw = w.name; }
+                                    HorizontalLayout {
+                                        padding: 16px;
+                                        spacing: 14px;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Rectangle {
+                                                width: 20px; height: 20px; border-radius: 10px; border-width: 2px;
+                                                border-color: f.sw == w.name ? C.ember : C.ghost;
+                                                if f.sw == w.name : Rectangle { width: 10px; height: 10px; border-radius: 5px; background: C.ember; }
+                                            }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center;
+                                            horizontal-stretch: 1;
+                                            spacing: 2px;
+                                            HorizontalLayout { spacing: 10px; alignment: start; Mono { text: w.name; font-size: 16px; font-weight: 700; } Text { text: w.kind; font-family: C.ui; font-size: 14px; color: C.muted; vertical-alignment: center; } }
+                                            Text { text: w.desc; font-family: C.ui; font-size: 15px; font-weight: 500; color: C.sub; overflow: elide; }
+                                        }
+                                        Mono { text: w.iface; font-size: 12px; color: C.muted; }
+                                    }
+                                }
+                            }
+
+                            if step == 4 : WizHead { t: "Ready to create"; s: "Name it, check the exact commands, then create. Nothing runs until you press Create."; }
+                            if step == 4 : VerticalLayout {
+                                spacing: 8px;
+                                Label { text: "NAME"; color: C.sub; }
+                                Field {
+                                    height: 46px;
+                                    mono: true;
+                                    font-size: 16px;
+                                    text: eff-name;
+                                    invalid: name-err != "";
+                                    edited(t) => { f.name = t; }
+                                }
+                                Text { text: name-err == "" ? "Available · letters, digits, - and _ only" : name-err; font-family: C.ui; font-size: 14px; font-weight: 500; color: name-err == "" ? C.green : C.crimson-text; }
+                            }
+                            if step == 4 : HorizontalLayout {
+                                spacing: 10px;
+                                for kv in [{k: "Template", v: tpl-title}, {k: "CPU / Memory", v: f.cpu + " · " + f.mem-g + "G"}, {k: "Disk", v: f.disk-g + "G on " + f.ds}, {k: "Network", v: f.sw}] : Rectangle {
+                                    horizontal-stretch: 1;
+                                    height: 64px;
+                                    border-radius: 12px;
+                                    border-width: 1px;
+                                    border-color: C.line;
+                                    background: C.field;
+                                    VerticalLayout {
+                                        padding: 14px;
+                                        alignment: center;
+                                        Text { text: kv.k; font-family: C.ui; font-size: 13px; color: C.muted; }
+                                        Mono { text: kv.v; font-size: 15px; font-weight: 700; overflow: elide; }
+                                    }
+                                }
+                            }
+                            if step == 4 : Check { checked: f.install && f.iso != ""; text: f.iso != "" ? "Start the installer right after creating" : "Start the installer (pick an ISO in Storage first)"; toggled => { if f.iso != "" { f.install = !f.install; } } }
+                            if step == 4 : Check { checked: f.autostart; text: "Start automatically at host boot (vm_list in rc.conf)"; toggled => { f.autostart = !f.autostart; } }
+                        }
+                    }
+                    // will run
+                    Rectangle {
+                        border-radius: 12px;
+                        background: C.sunk;
+                        border-width: 1px;
+                        border-color: C.line-soft;
+                        VerticalLayout {
+                            padding: 14px;
+                            padding-left: 16px;
+                            spacing: 6px;
+                            Label { text: "WILL RUN"; }
+                            for c in cmds : HorizontalLayout {
+                                Mono { text: "$ "; font-size: 13.5px; color: C.ember; }
+                                Mono { text: c; font-size: 13.5px; horizontal-stretch: 1; overflow: elide; }
+                            }
+                        }
+                    }
+                }
+            }
+            Rectangle { height: 1px; background: C.line; }
+            Rectangle {
+                background: C.chrome;
+                HorizontalLayout {
+                    padding: 14px;
+                    padding-left: 20px;
+                    padding-right: 20px;
+                    spacing: 10px;
+                    Btn { kind: "ghost"; text: "Cancel"; clicked => { close(); } }
+                    Text { text: "Enter to continue · Esc to cancel"; font-family: C.ui; font-size: 14px; color: C.muted; horizontal-alignment: right; vertical-alignment: center; horizontal-stretch: 1; }
+                    Btn { text: "Back"; enabled: step > 0; clicked => { step = max(0, step - 1); } }
+                    if step < 4 : Btn { kind: "primary"; text: "Continue"; clicked => { step += 1; } }
+                    if step == 4 : Btn { kind: "primary"; text: spec.install ? "Create & install" : "Create"; enabled: name-err == ""; clicked => { App.wizard-create(spec); close(); } }
+                }
+            }
+        }
+    }
+}
+
+// ───────────────────────── console ─────────────────────────
+
+export component ConsoleModal inherits Backdrop {
+    callback close();
+    dismiss => { }
+    forward-focus: fs;
+    Rectangle {
+        width: min(960px, root.width - 32px);
+        height: min(600px, root.height - 32px);
+        border-radius: 18px;
+        background: C.panel;
+        border-width: 1px;
+        border-color: C.line2;
+        clip: true;
+        TouchArea { clicked => { fs.focus(); } }
+        VerticalLayout {
+            HorizontalLayout {
+                padding: 12px;
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 10px;
+                VerticalLayout { alignment: center; Icon { name: "term"; color: C.ember; } }
+                Mono { text: App.console-name; font-weight: 700; }
+                Mono { text: App.console-dev; font-size: 12px; color: C.muted; horizontal-stretch: 1; overflow: elide; }
+                Text { text: App.console-status; font-family: C.ui; font-size: 13px; font-weight: 600; color: App.console-alive ? C.green : C.muted; vertical-alignment: center; }
+                Btn { size: "sm"; kind: "ghost"; text: "Open in terminal"; clicked => { App.console-external(App.console-name); } }
+                Btn { size: "sm"; kind: "ghost"; text: "Detach"; clicked => { close(); } }
+            }
+            Rectangle { height: 1px; background: C.line; }
+            Rectangle {
+                vertical-stretch: 1;
+                background: C.sunk;
+                border-width: 1px;
+                border-color: fs.has-focus ? C.ember.with-alpha(0.25) : transparent;
+                sv := ScrollView {
+                    property <string> txt: App.console-text;
+                    changed txt => { self.content-y = min(0px, self.visible-height - self.content-height); }
+                    VerticalLayout {
+                        padding: 14px;
+                        padding-left: 16px;
+                        Text {
+                            text: App.console-text + (App.console-alive ? "█" : "");
+                            font-family: C.mono;
+                            font-size: 13px;
+                            color: C.term-text;
+                            wrap: char-wrap;
+                        }
+                    }
+                }
+                fs := FocusScope {
+                    key-pressed(e) => {
+                        if e.modifiers.control && e.text == "]" { close(); return accept; }
+                        App.console-key(e.text, e.modifiers.control);
+                        accept
+                    }
+                }
+            }
+            Rectangle {
+                height: 30px;
+                background: C.chrome;
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 8px;
+                    Text { text: "Keys go straight to the guest's serial port · Ctrl+] or Detach to leave (the guest keeps running)"; font-family: C.ui; font-size: 13px; color: C.muted; vertical-alignment: center; }
+                }
+            }
+        }
+    }
+    init => { fs.focus(); }
+}
+
+// ───────────────────────── toast ─────────────────────────
+
+export component Toast inherits Rectangle {
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: App.toast.code == 0 ? C.line2 : #FF4D6380;
+    background: C.surface;
+    drop-shadow-blur: 24px;
+    drop-shadow-color: #00000066;
+    drop-shadow-offset-y: 8px;
+    width: min(680px, lay.preferred-width);
+    height: lay.preferred-height;
+    lay := VerticalLayout {
+        padding: 10px;
+        padding-left: 14px;
+        padding-right: 8px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 10px;
+            VerticalLayout { alignment: center; ExitBadge { code: App.toast.code; } }
+            Mono { text: App.toast.cmd; overflow: elide; horizontal-stretch: 1; }
+            Btn { size: "sm"; kind: "ghost"; text: "Dismiss"; clicked => { App.dismiss-toast(); } }
+        }
+        if App.toast.stderr != "" : Mono { text: App.toast.stderr; font-size: 12px; color: C.err-text; wrap: word-wrap; max-width: 640px; }
+    }
+}

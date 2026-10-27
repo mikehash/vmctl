@@ -109,6 +109,12 @@ pub fn parse_list(raw: &str) -> Option<Vec<VmSummary>> {
         if parts.len() < 8 {
             continue;
         }
+        // AUTO may be two tokens for autostart guests: `Yes [2]` (boot order).
+        let mut autostart = parts[6].to_string();
+        if parts.len() > 8 && parts[7].starts_with('[') && parts[7].ends_with(']') {
+            autostart = format!("{} {}", parts[6], parts[7]);
+            parts.remove(7);
+        }
         // STATE is everything from the 8th token onward (may contain spaces).
         let state = parts.split_off(7).join(" ");
         rows.push(VmSummary {
@@ -118,7 +124,7 @@ pub fn parse_list(raw: &str) -> Option<Vec<VmSummary>> {
             cpu: parts[3].to_string(),
             memory: parts[4].to_string(),
             vnc: parts[5].to_string(),
-            autostart: parts[6].to_string(),
+            autostart,
             state,
         });
     }
@@ -142,6 +148,15 @@ alpha   default    uefi       2    1G      -    Yes   Running (1234)\n";
         assert!(!rows[0].is_running());
         assert_eq!(rows[1].state, "Running (1234)");
         assert!(rows[1].is_running());
+    }
+
+    #[test]
+    fn autostart_order_is_not_part_of_state() {
+        let raw = "NAME             DATASTORE  LOADER     CPU  MEMORY  VNC  AUTO     STATE\n\
+qtumvalidator10  default    uefi       2    4096M   -    Yes [2]  Running (90212)\n";
+        let rows = parse_list(raw).unwrap();
+        assert_eq!(rows[0].autostart, "Yes [2]");
+        assert_eq!(rows[0].state, "Running (90212)");
     }
 
     #[test]

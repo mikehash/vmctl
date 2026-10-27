@@ -1,177 +1,303 @@
-// vmctl-desktop — Mission Control UI (Slint).
-// Maps 1:1 to the prototype's design system: crimson = action, ember = focus/
-// assistant, state colours never reuse crimson. Shared core drives all state.
+// vmctl-desktop — Mission Control (Slint).
+// The window shell: header, privilege banner, nav rail, views, status bar and
+// overlays. All state lives in the `App` global (state.slint), driven by Rust.
 
-import { Button, LineEdit, ComboBox, ListView, TabWidget } from "std-widgets.slint";
+import { C, Icon } from "theme.slint";
+import { Btn, Label, Mono, UiText, Heading, Hex, Kbd, Field, Dot } from "widgets.slint";
+import { App, VmRow, Detail, MsgRow, SnapRow, LogRow, KV, ChipRow, StepRow, SwitchRow, DsRow, IsoRow, TplRow, ToastData, WizSpec } from "state.slint";
+import { MachineList, DetailView, SnapshotsView, NetworkView, ActivityView } from "views.slint";
+import { Drawer, ConfirmModal, Wizard, ConsoleModal, Toast } from "overlays.slint";
 
-// ── Design tokens ──
-global C {
-    in-out property <brush> bg: #0A0B0D;
-    in-out property <brush> panel: #0F1114;
-    in-out property <brush> surface: #14171B;
-    in-out property <brush> raised: #1A1E23;
-    in-out property <brush> line: #1E2228;
-    in-out property <brush> text: #ECEEF1;
-    in-out property <brush> sub: #B4BAC4;
-    in-out property <brush> muted: #9AA1AC;
-    in-out property <brush> crimson: #DC2F45;
-    in-out property <brush> ember: #FF7A3D;
-    in-out property <brush> green: #34D399;
-    in-out property <brush> amber: #F5B53D;
-    in-out property <brush> violet: #B79CFF;
+export { App, VmRow, Detail, MsgRow, SnapRow, LogRow, KV, ChipRow, StepRow, SwitchRow, DsRow, IsoRow, TplRow, ToastData, WizSpec }
+
+component NavItem inherits Rectangle {
+    in property <string> id;
+    in property <string> icon;
+    in property <string> text;
+    in property <int> count;
+    property <bool> on: App.view == id;
+    height: 40px;
+    border-radius: 9px;
+    background: on ? C.raised : ta.has-hover ? #FFFFFF06 : transparent;
+    animate background { duration: 140ms; }
+    accessible-role: tab;
+    accessible-label: text;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        VerticalLayout { alignment: center; Icon { name: icon; size: 18px; weight: 1.8; color: on ? C.ember : C.sub; } }
+        Text { text: root.text; font-family: C.ui; font-weight: 600; font-size: 15px; color: on ? C.text : C.sub; vertical-alignment: center; horizontal-stretch: 1; }
+        Mono { text: count; font-size: 12px; color: C.muted; }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { App.set-view(id); } }
 }
 
-export struct VmRowData {
-    name: string,
-    os: string,
-    state: string,
-    cpu: int,
-    mem: string,
+component AllocBar inherits VerticalLayout {
+    in property <string> k;
+    in property <float> used;
+    in property <float> total;
+    in property <string> unit;
+    spacing: 6px;
+    HorizontalLayout {
+        Text { text: k; font-family: C.ui; font-size: 14px; font-weight: 600; color: C.text; horizontal-stretch: 1; }
+        Mono { text: (round(used * 10) / 10) + unit + " / " + round(total) + unit; font-size: 12px; color: C.sub; }
+    }
+    Rectangle {
+        height: 4px; border-radius: 2px; background: C.line;
+        Rectangle {
+            x: 0;
+            width: parent.width * min(1, total > 0 ? used / total : 0);
+            border-radius: 2px;
+            background: used > total ? C.crimson : C.ember;
+            animate width { duration: 300ms; easing: ease-out; }
+        }
+    }
 }
 
 export component MainWindow inherits Window {
-    title: "vmctl — Mission Control";
+    title: "vmctl — " + App.host-name;
+    icon: @image-url("icon.png");
     background: C.bg;
-    preferred-width: 1280px;
-    preferred-height: 800px;
+    preferred-width: 1440px;
+    preferred-height: 880px;
+    min-width: 1100px;
+    min-height: 680px;
+    default-font-family: C.ui;
+    default-font-size: 15px;
 
-    in-out property <[VmRowData]> vms: [
-        { name: "testvm", os: "FreeBSD", state: "Locked", cpu: 1, mem: "256M" },
-    ];
-    in-out property <int> selected: 0;
-    in-out property <string> status: "Ready · doas vmctl-desktop";
-    in-out property <string> assistant-input: "";
-    in-out property <[string]> transcript: ["Ask vmctl in plain English…"];
+    function open-confirm(kind: string, name: string, snap: string) {
+        App.confirm-name = name;
+        App.confirm-snap = snap;
+        App.confirm-kind = kind;
+    }
+    function ask(t: string) {
+        App.drawer = true;
+        App.ask(t);
+    }
 
-    callback start-selected();
-    callback stop-selected();
-    callback ask(string);
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(e) => {
+            if e.modifiers.control && (e.text == "k" || e.text == "K") { App.drawer = !App.drawer; if App.drawer { drawer.focus-input(); } return accept; }
+            if e.modifiers.control && (e.text == "n" || e.text == "N") { App.wizard-open = true; return accept; }
+            if (e.modifiers.control && (e.text == "r" || e.text == "R")) || e.text == Key.F5 { App.refresh(); return accept; }
+            if e.text == "/" { search.focus-input(); return accept; }
+            if e.text == Key.Escape { if App.drawer { App.drawer = false; return accept; } if App.toast.shown { App.dismiss-toast(); return accept; } }
+            if e.modifiers.alt && e.text == "1" { App.set-view("machines"); return accept; }
+            if e.modifiers.alt && e.text == "2" { App.set-view("snapshots"); return accept; }
+            if e.modifiers.alt && e.text == "3" { App.set-view("network"); return accept; }
+            if e.modifiers.alt && e.text == "4" { App.set-view("activity"); return accept; }
+            reject
+        }
 
     VerticalLayout {
-        padding: 0px;
-        spacing: 0px;
-
-        // ── Header ──
+        // ── header ──
         Rectangle {
-            height: 56px;
-            background: #0C0E10;
+            height: 58px;
+            background: C.chrome;
+            Rectangle { y: parent.height - 1px; height: 1px; background: C.line; }
             HorizontalLayout {
-                padding: 16px;
-                spacing: 12px;
-                alignment: start;
-                Text { text: "⬢ VMCTL"; color: C.crimson; font-size: 18px; font-weight: 800; vertical-alignment: center; }
-                Text { text: "Mission Control"; color: C.sub; font-size: 14px; vertical-alignment: center; }
+                padding-left: 20px;
+                padding-right: 20px;
+                spacing: 16px;
+                HorizontalLayout {
+                    spacing: 10px;
+                    VerticalLayout { alignment: center; Hex { } }
+                    Text { text: "VMCTL"; font-family: C.display; font-weight: 800; font-size: 16px; letter-spacing: 3.5px; color: C.text; vertical-alignment: center; }
+                }
+                VerticalLayout { alignment: center; Rectangle { width: 1px; height: 22px; background: C.line2; } }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Mono { text: App.host-name; font-size: 12px; }
+                    for chip in [App.host-os, App.vm-version] : VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            height: 22px;
+                            width: ct.preferred-width + 16px;
+                            border-radius: 11px;
+                            border-width: 1px;
+                            border-color: C.line2;
+                            ct := Mono { text: chip; font-size: 11.5px; color: C.muted; }
+                        }
+                    }
+                    if App.demo : VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            height: 22px; width: dt.preferred-width + 16px; border-radius: 11px; background: #B79CFF1F;
+                            dt := Mono { text: "DEMO DATA"; font-size: 11px; color: C.violet; }
+                        }
+                    }
+                }
                 Rectangle { horizontal-stretch: 1; }
-                Text { text: root.status; color: C.muted; font-size: 13px; vertical-alignment: center; }
+                VerticalLayout {
+                    alignment: center;
+                    search := Field {
+                        width: 400px;
+                        placeholder: "Search machines, snapshots, switches";
+                        edited(t) => { App.search-changed(t); }
+                        accepted => { keys.focus(); }
+                        VerticalLayout { alignment: center; padding-right: 8px; Icon { name: "search"; color: C.muted; } }
+                        VerticalLayout { alignment: center; padding-left: 8px; Kbd { text: "/"; } }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        height: 28px;
+                        width: pr.preferred-width + 20px;
+                        border-radius: 14px;
+                        background: App.privilege == "none" ? #F5B53D1F : #34D3991A;
+                        pr := HorizontalLayout {
+                            x: 10px;
+                            spacing: 6px;
+                            if App.privilege != "none" : VerticalLayout { alignment: center; Dot { size: 7px; background: C.green; } }
+                            if App.privilege == "none" : VerticalLayout { alignment: center; Icon { name: "alert"; size: 13px; color: C.amber; } }
+                            Mono {
+                                text: App.privilege == "root" ? "root" : App.privilege == "sudo" ? "sudo · " + App.user : App.user + " · read-only";
+                                font-size: 12px;
+                                color: App.privilege == "none" ? C.amber : C.green;
+                            }
+                        }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Btn {
+                        icon: "spark"; icon-color: C.ember; text: "Ask vmctl";
+                        clicked => { App.drawer = !App.drawer; if App.drawer { drawer.focus-input(); } }
+                    }
+                }
+                VerticalLayout { alignment: center; Btn { kind: "primary"; icon: "plus"; text: "New machine"; enabled: App.privilege != "none" && App.templates.length > 0; clicked => { App.wizard-open = true; } } }
             }
         }
 
-        HorizontalLayout {
-            spacing: 0px;
+        // ── privilege / error banner ──
+        if App.privilege == "none" || App.list-error != "" : Rectangle {
+            background: #F5B53D14;
+            Rectangle { y: parent.height - 1px; height: 1px; background: #F5B53D4D; }
+            HorizontalLayout {
+                padding: 10px;
+                padding-left: 20px;
+                padding-right: 20px;
+                spacing: 12px;
+                VerticalLayout { alignment: center; Icon { name: "alert"; color: C.amber; } }
+                Text {
+                    text: App.privilege == "none"
+                        ? "vm(8) needs root. You're running as " + App.user + " without passwordless sudo, so you can browse but nothing will run."
+                        : "vm list failed: " + App.list-error;
+                    font-family: C.ui; font-weight: 600; font-size: 15px; color: C.text; vertical-alignment: center;
+                    horizontal-stretch: 1; wrap: word-wrap;
+                }
+                if App.privilege == "none" : VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        height: 26px; width: ht.preferred-width + 16px; border-radius: 6px; background: C.sunk;
+                        ht := Mono { text: "sudo vmctl-desktop"; font-size: 12px; color: C.sub; }
+                    }
+                }
+                VerticalLayout { alignment: center; Btn { size: "sm"; text: "Check again"; clicked => { App.reprobe(); } } }
+            }
+        }
 
-            // ── VM list ──
+        // ── body ──
+        HorizontalLayout {
+            vertical-stretch: 1;
+            // nav rail
             Rectangle {
-                width: 300px;
-                background: C.panel;
+                width: 200px;
+                background: C.chrome;
+                Rectangle { x: parent.width - 1px; width: 1px; background: C.line; }
                 VerticalLayout {
                     padding: 12px;
-                    spacing: 6px;
-                    Text { text: "MACHINES"; color: C.muted; font-size: 12px; font-weight: 700; }
-                    for vm[i] in root.vms : Rectangle {
-                        height: 56px;
-                        border-radius: 8px;
-                        background: root.selected == i ? C.raised : transparent;
-                        border-color: root.selected == i ? C.line : transparent;
-                        border-width: 1px;
-                        TouchArea {
-                            clicked => { root.selected = i; }
-                        }
-                        HorizontalLayout {
-                            padding: 10px;
-                            spacing: 8px;
-                            alignment: start;
-                            Rectangle {
-                                width: 8px; height: 8px; border-radius: 4px;
-                                y: 14px;
-                                background: vm.state == "Running" ? C.green : vm.state == "Stopped" ? C.muted : vm.state == "Suspended" ? C.amber : C.violet;
-                            }
-                            VerticalLayout {
-                                spacing: 2px;
-                                Text { text: vm.name; color: C.text; font-size: 14px; font-weight: 600; }
-                                Text { text: vm.os + " · " + vm.cpu + " vCPU · " + vm.mem; color: C.muted; font-size: 11px; }
-                            }
-                        }
+                    padding-top: 16px;
+                    spacing: 4px;
+                    NavItem { id: "machines"; icon: "server"; text: "Machines"; count: App.count-all; }
+                    NavItem { id: "snapshots"; icon: "layers"; text: "Snapshots"; count: App.snap-total; }
+                    NavItem { id: "network"; icon: "network"; text: "Switches & storage"; count: App.switches.length; }
+                    NavItem { id: "activity"; icon: "activity"; text: "Activity"; count: App.log-total; }
+                    Rectangle { vertical-stretch: 1; }
+                    Rectangle { height: 1px; background: C.line; }
+                    VerticalLayout {
+                        padding: 8px;
+                        padding-top: 14px;
+                        padding-bottom: 2px;
+                        spacing: 12px;
+                        Label { text: "HOST ALLOCATION"; }
+                        AllocBar { k: "vCPUs"; used: App.alloc-cpu; total: App.threads; unit: ""; }
+                        AllocBar { k: "Memory"; used: App.alloc-mem-g; total: App.mem-g; unit: "G"; }
+                        Text { text: "Configured for running and suspended machines."; font-family: C.ui; font-size: 12.5px; font-weight: 500; color: C.muted; wrap: word-wrap; }
                     }
                 }
             }
-
-            // ── Detail + assistant ──
-            Rectangle {
+            // views
+            if App.view == "machines" : MachineList { ask(t) => { root.ask(t); } }
+            if App.view == "machines" && App.has-detail : DetailView {
                 horizontal-stretch: 1;
-                background: C.bg;
+                ask(t) => { root.ask(t); }
+                confirm(k, n, s) => { open-confirm(k, n, s); }
+                open-snapshots => { App.set-view("snapshots"); }
+            }
+            if App.view == "machines" && !App.has-detail : Rectangle {
+                horizontal-stretch: 1;
                 VerticalLayout {
-                    padding: 20px;
-                    spacing: 14px;
-
-                    // Detail header.
-                    HorizontalLayout {
-                        spacing: 12px;
-                        alignment: start;
-                        Text {
-                            text: root.vms.length > 0 ? root.vms[root.selected].name : "(none)";
-                            color: C.text; font-size: 24px; font-weight: 700;
-                        }
-                        Rectangle {
-                            width: 100px; height: 26px; border-radius: 13px;
-                            background: C.raised;
-                            Text {
-                                text: root.vms.length > 0 ? root.vms[root.selected].state : "";
-                                color: C.sub; font-size: 12px; horizontal-alignment: center; vertical-alignment: center;
-                            }
-                        }
-                    }
-
-                    // Action bar.
-                    HorizontalLayout {
-                        spacing: 8px;
-                        alignment: start;
-                        Button { text: "Start"; clicked => { root.start-selected(); } }
-                        Button { text: "Stop"; clicked => { root.stop-selected(); } }
-                        Button { text: "Console"; }
-                        Button { text: "Snapshot"; }
-                    }
-
-                    // Assistant.
-                    Rectangle {
-                        vertical-stretch: 1;
-                        border-radius: 12px;
-                        background: C.surface;
-                        border-color: C.line;
-                        border-width: 1px;
-                        VerticalLayout {
-                            padding: 12px;
-                            spacing: 8px;
-                            Text { text: "ASK VMCTL"; color: C.ember; font-size: 11px; font-weight: 700; }
-                            for line in root.transcript : Text {
-                                text: line;
-                                color: line.starts-with(">") ? C.ember : C.sub;
-                                font-size: 13px;
-                                wrap: word-wrap;
-                            }
-                            HorizontalLayout {
-                                spacing: 8px;
-                                LineEdit {
-                                    horizontal-stretch: 1;
-                                    placeholder-text: "e.g. make a 4GB ubuntu machine with 2 cpus";
-                                    text <=> root.assistant-input;
-                                    accepted => { root.ask(root.assistant-input); }
-                                }
-                                Button { text: "Plan"; clicked => { root.ask(root.assistant-input); } }
-                            }
-                        }
-                    }
+                    alignment: center;
+                    spacing: 12px;
+                    Text { text: App.count-all == 0 ? "No virtual machines on this host yet." : "Select a machine."; font-family: C.ui; font-size: 18px; font-weight: 600; color: C.sub; horizontal-alignment: center; }
+                    if App.count-all == 0 : HorizontalLayout { alignment: center; Btn { kind: "primary"; icon: "plus"; text: "Create your first machine"; enabled: App.privilege != "none"; clicked => { App.wizard-open = true; } } }
                 }
+            }
+            if App.view == "snapshots" : SnapshotsView { horizontal-stretch: 1; confirm(k, n, s) => { open-confirm(k, n, s); } }
+            if App.view == "network" : NetworkView { horizontal-stretch: 1; }
+            if App.view == "activity" : ActivityView { horizontal-stretch: 1; }
+        }
+
+        // ── status bar ──
+        Rectangle {
+            height: 30px;
+            background: C.chrome;
+            Rectangle { y: 0; height: 1px; background: C.line; }
+            HorizontalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                spacing: 18px;
+                HorizontalLayout {
+                    spacing: 6px;
+                    VerticalLayout { alignment: center; Dot { size: 7px; background: App.list-error != "" ? C.crimson : App.busy ? C.ember : C.green; } }
+                    Mono { text: App.status-left; font-size: 12px; color: C.muted; }
+                }
+                Mono { text: App.status-ds; font-size: 12px; color: C.muted; }
+                Mono { text: App.status-sw; font-size: 12px; color: C.muted; }
+                Mono { text: App.status-last; font-size: 12px; color: C.muted; horizontal-stretch: 1; horizontal-alignment: right; overflow: elide; }
             }
         }
     }
+
+    // ── assistant drawer ──
+    drawer := Drawer {
+        x: App.drawer ? root.width - self.width : root.width + 24px;
+        y: 58px;
+        height: root.height - 58px - 30px;
+        animate x { duration: 260ms; easing: cubic-bezier(0.2, 0.9, 0.3, 1); }
+        drop-shadow-blur: App.drawer ? 48px : 0px;
+        drop-shadow-color: #00000073;
+        drop-shadow-offset-x: -24px;
+    }
+
+    // ── toast ──
+    if App.toast.shown : Toast {
+        x: (root.width - self.width) / 2 - (App.drawer ? 220px : 0px);
+        y: root.height - 46px - self.height;
+    }
+
+    // ── modals ──
+    if App.wizard-open : Wizard { close => { App.wizard-open = false; keys.focus(); } }
+    if App.confirm-kind != "" : ConfirmModal {
+        kind: App.confirm-kind;
+        target: App.confirm-name;
+        snap: App.confirm-snap;
+        close => { App.confirm-kind = ""; keys.focus(); }
+    }
+    if App.console-open : ConsoleModal { close => { App.console-close(); keys.focus(); } }
+    } // keys FocusScope
 }

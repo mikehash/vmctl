@@ -9,9 +9,16 @@
 //! shows up in the other — same core, same state, same honest exit codes.
 
 pub mod actions;
+pub mod activity;
 pub mod assistant;
 pub mod backend;
+pub mod demo;
+pub mod info;
+pub mod inventory;
 pub mod iso;
+pub mod model;
+pub mod ops;
+pub mod planner;
 pub mod templates;
 pub mod vmbhyve;
 

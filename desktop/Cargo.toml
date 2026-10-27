@@ -1,20 +1,15 @@
-# vmctl-desktop is built as its own workspace: Slint's dependency tree
-# (annotate-snippets → unicode-width ^0.2.2) conflicts with ratatui's pinned
-# unicode-width =0.2.0 used by the TUI. Keeping the front-ends in separate
-# workspaces lets each resolve its own deps while still sharing vmctl-core.
+# vmctl-desktop is its own workspace: Slint's dependency tree conflicts with
+# ratatui's pinned unicode-width used by the TUI. Both share vmctl-core by path.
 [workspace]
 resolver = "2"
 members = ["."]
 
-[workspace.package]
-version = "0.1.0"
-edition = "2021"
-
 [package]
 name = "vmctl-desktop"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Mission Control — the Slint desktop front-end for vm-bhyve over vmctl-core"
+license = "BSD-2-Clause"
 
 [[bin]]
 name = "vmctl-desktop"
@@ -22,11 +17,18 @@ path = "src/main.rs"
 
 [dependencies]
 vmctl-core = { path = "../core" }
-slint = "1.18"
-anyhow = "1"
+# Pure-Rust stack: winit windowing + femtovg (OpenGL) renderer, with the
+# software renderer as a fallback for hosts without GL (e.g. Xvfb, VNC).
+slint = { version = "1.18", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg", "renderer-software", "accessibility"] }
+png = "0.18"
 
 [build-dependencies]
 slint-build = "1.18"
 
 [dev-dependencies]
-tempfile = "3"
+i-slint-backend-testing = "1.18"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
