@@ -76,7 +76,7 @@ fn num_before(t: &str, units: &[&str]) -> Option<u64> {
         }
         let rest = &tok[digits.len()..];
         let unit = if rest.is_empty() { toks.get(i + 1).copied().unwrap_or("") } else { rest };
-        if units.iter().any(|u| unit == *u) {
+        if units.contains(&unit) {
             return digits.parse().ok();
         }
     }

@@ -78,7 +78,7 @@ where
             Iso { name, path, size, source }
         })
         .collect();
-    out.sort_by(|a, b| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()));
+    out.sort_by_key(|a| a.name.to_ascii_lowercase());
     out.dedup_by(|a, b| a.name == b.name);
     out
 }

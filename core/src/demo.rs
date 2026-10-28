@@ -23,6 +23,7 @@ pub struct DemoHost {
 
 const DAY: i64 = 86_400;
 
+#[allow(clippy::too_many_arguments)] // fixture builder; positional reads as a table
 fn guest(name: &str, ds: &str, loader: &str, cpu: u32, mem: &str, state: VmState, sw: &str, nic: &str, disk_g: u32, snaps: &[(&str, i64, u64)]) -> Guest {
     let t = now();
     let dir = PathBuf::from(format!("/zroot/vm/{name}"));
@@ -214,7 +215,9 @@ impl DemoHost {
                 let t = Self::templates().into_iter().find(|t| t.id == tpl).ok_or_else(|| format!("unable to find template /zroot/vm/.templates/{tpl}.conf"))?;
                 let disk: u32 = opt("-s").and_then(|s| s.trim_end_matches('G').parse().ok()).unwrap_or(20);
                 let mut g = guest(n, opt("-d").unwrap_or("default"), &t.loader, opt("-c").and_then(|c| c.parse().ok()).unwrap_or(t.cpu), opt("-m").unwrap_or("1G"), VmState::Stopped, "public", &t.nic, disk, &[]);
-                g.info.as_mut().map(|i| i.consoles.clear());
+                if let Some(i) = g.info.as_mut() {
+                    i.consoles.clear();
+                }
                 self.guests.push(g);
                 Ok(String::new())
             }
