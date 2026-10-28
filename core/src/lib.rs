@@ -19,6 +19,7 @@ pub mod iso;
 pub mod model;
 pub mod ops;
 pub mod planner;
+pub mod recipes;
 pub mod templates;
 pub mod vmbhyve;
 

@@ -26,6 +26,7 @@ use vmctl_core::inventory::{Guest, Hypervisor, Inventory, LiveHost, Privilege};
 use vmctl_core::model::{fmt_bytes, fmt_local, fmt_mib, next_name, now, stamp, valid_name, VmState};
 use vmctl_core::ops::{suggest, Op};
 use vmctl_core::planner::{self, Reply};
+use vmctl_core::recipes;
 
 use worker::{Event, Tag, Worker};
 
@@ -144,30 +145,6 @@ fn log_row(e: &Entry, with_date: bool) -> LogRow {
     let full = fmt_local(e.ts, true);
     let time = if with_date || !full.starts_with(&today) { full } else { fmt_local(e.ts, false) };
     LogRow { time: ss(time), code: e.code, cmd: ss(&e.cmd), stderr: ss(&e.stderr), source: ss(&e.source) }
-}
-
-/// Look up an op the UI asked for by name.
-fn op_for(op: &str, name: &str, g: Option<&Guest>, inv: &Inventory) -> Option<Op> {
-    let n = name.to_string();
-    Some(match op {
-        "start" => Op::Start(n),
-        "stop" => Op::Stop(n),
-        "restart" => Op::Restart(n),
-        "suspend" => Op::Suspend(n),
-        "poweroff" => Op::Poweroff(n),
-        "destroy" => Op::Destroy(n),
-        "snapshot" => Op::Snapshot { force: g.map(|g| g.state.is_running()).unwrap_or(false), snap: format!("manual-{}", stamp(now())), name: n },
-        "autostart" => Op::Autostart { on: !g?.autostart, name: n },
-        "unlock" => Op::Unlock { lock: g?.dir.join("run.lock"), name: n },
-        _ => {
-            let _ = inv;
-            return None;
-        }
-    })
-}
-
-fn dataset_of(g: &Guest, inv: &Inventory) -> String {
-    inv.datastore(&g.datastore).map(|d| d.dataset.clone()).unwrap_or_else(|| "zroot/vm".into())
 }
 
 // ───────────────────────── pushing state to the UI ─────────────────────────
@@ -775,7 +752,7 @@ fn wire_callbacks(ui: &MainWindow, st: &Shared, w: &Worker) {
             let mut s = st.borrow_mut();
             let Some(inv) = s.inv.clone() else { return };
             let g = inv.guest(&name);
-            if let Some(o) = op_for(&op, &name, g, &inv) {
+            if let Some(o) = recipes::op_for(&op, &name, g) {
                 run_ops(&ui, &mut s, &w, vec![o], Tag::Action);
             }
         });
@@ -788,7 +765,7 @@ fn wire_callbacks(ui: &MainWindow, st: &Shared, w: &Worker) {
             let Some(ui) = weak.upgrade() else { return };
             let mut s = st.borrow_mut();
             let Some(inv) = s.inv.clone() else { return };
-            if let Some(o) = op_for("snapshot", &name, inv.guest(&name), &inv) {
+            if let Some(o) = recipes::op_for("snapshot", &name, inv.guest(&name)) {
                 run_ops(&ui, &mut s, &w, vec![o], Tag::Action);
             }
         });
@@ -801,7 +778,7 @@ fn wire_callbacks(ui: &MainWindow, st: &Shared, w: &Worker) {
             let Some(ui) = weak.upgrade() else { return };
             let mut s = st.borrow_mut();
             let Some(inv) = s.inv.clone() else { return };
-            if let Some(o) = op_for("autostart", &name, inv.guest(&name), &inv) {
+            if let Some(o) = recipes::op_for("autostart", &name, inv.guest(&name)) {
                 run_ops(&ui, &mut s, &w, vec![o], Tag::Action);
             }
         });
@@ -906,7 +883,7 @@ fn wire_callbacks(ui: &MainWindow, st: &Shared, w: &Worker) {
         app.on_confirm_preview(move |kind, name, snap, safety| {
             let s = st.borrow();
             let Some(inv) = s.inv.as_ref() else { return model(vec![]) };
-            model(confirm_ops(inv, &kind, &name, &snap, safety).iter().map(|o| ss(o.cmd())).collect())
+            model(recipes::confirm_ops(inv, &kind, &name, &snap, safety).iter().map(|o| ss(o.cmd())).collect())
         });
     }
     {
@@ -917,7 +894,7 @@ fn wire_callbacks(ui: &MainWindow, st: &Shared, w: &Worker) {
             let Some(ui) = weak.upgrade() else { return };
             let mut s = st.borrow_mut();
             let Some(inv) = s.inv.clone() else { return };
-            let ops = confirm_ops(&inv, &kind, &name, &snap, safety);
+            let ops = recipes::confirm_ops(&inv, &kind, &name, &snap, safety);
             run_ops(&ui, &mut s, &w, ops, Tag::Action);
         });
     }
@@ -951,7 +928,7 @@ fn wire_callbacks(ui: &MainWindow, st: &Shared, w: &Worker) {
         app.on_wizard_cmds(move |spec| {
             let s = st.borrow();
             let Some(inv) = s.inv.as_ref() else { return model(vec![]) };
-            model(wizard_ops(inv, &spec).iter().map(|o| ss(o.cmd())).collect())
+            model(recipes::wizard_ops(inv, &core_spec(&spec)).iter().map(|o| ss(o.cmd())).collect())
         });
     }
     {
@@ -962,7 +939,7 @@ fn wire_callbacks(ui: &MainWindow, st: &Shared, w: &Worker) {
             let Some(ui) = weak.upgrade() else { return };
             let mut s = st.borrow_mut();
             let Some(inv) = s.inv.clone() else { return };
-            let ops = wizard_ops(&inv, &spec);
+            let ops = recipes::wizard_ops(&inv, &core_spec(&spec));
             run_ops(&ui, &mut s, &w, ops, Tag::Create(spec.name.to_string()));
         });
     }
@@ -1087,73 +1064,21 @@ fn ask(ui: &MainWindow, st: &Shared, text: &str) {
     app.set_msgs_serial(app.get_msgs_serial() + 1);
 }
 
-fn confirm_ops(inv: &Inventory, kind: &str, name: &str, snap: &str, safety: bool) -> Vec<Op> {
-    let ts = now();
-    let g = inv.guest(name);
-    let mut v = Vec::new();
-    match kind {
-        "poweroff" => {
-            if safety {
-                v.push(Op::Snapshot { name: name.into(), snap: format!("pre-poweroff-{}", stamp(ts)), force: true });
-            }
-            v.push(Op::Poweroff(name.into()));
-        }
-        "rollback" => {
-            if let Some(g) = g {
-                let mut ds: Vec<String> = g.snaps.iter().find(|s| s.name == snap).map(|s| s.datasets.clone()).unwrap_or_default();
-                if ds.is_empty() {
-                    ds.push(format!("{}/{name}", dataset_of(g, inv)));
-                }
-                for dataset in ds {
-                    v.push(Op::Rollback { name: name.into(), snap: snap.into(), dataset });
-                }
-            }
-        }
-        "destroy" => v.push(Op::Destroy(name.into())),
-        "snapdelete" => {
-            if let Some(g) = g {
-                v.push(Op::SnapDelete { name: name.into(), snap: snap.into(), dataset: format!("{}/{name}", dataset_of(g, inv)) });
-            }
-        }
-        "unlock" => {
-            if let Some(g) = g {
-                v.push(Op::Unlock { name: name.into(), lock: g.dir.join("run.lock") });
-            }
-        }
-        _ => {}
+/// Slint's generated `WizSpec` → the core recipe input (negative ints clamp to 0; core clamps to ≥1).
+fn core_spec(s: &WizSpec) -> recipes::WizSpec {
+    let n = |v: i32| v.max(0) as u32;
+    recipes::WizSpec {
+        tpl: s.tpl.to_string(),
+        cpu: n(s.cpu),
+        mem_gib: n(s.mem_g),
+        disk_gib: n(s.disk_g),
+        ds: s.ds.to_string(),
+        sw: s.sw.to_string(),
+        iso: s.iso.to_string(),
+        name: s.name.to_string(),
+        install: s.install,
+        autostart: s.autostart,
     }
-    v
-}
-
-fn wizard_ops(inv: &Inventory, spec: &WizSpec) -> Vec<Op> {
-    let name = spec.name.to_string();
-    let mut v = vec![Op::Create {
-        name: name.clone(),
-        template: spec.tpl.to_string(),
-        datastore: spec.ds.to_string(),
-        disk_gb: spec.disk_g.max(1) as u32,
-        cpu: spec.cpu.max(1) as u32,
-        mem_mib: spec.mem_g.max(1) as u64 * 1024,
-    }];
-    let tpl_switch = inv.templates.iter().find(|t| t.id == spec.tpl.as_str()).map(|t| t.switch.clone()).unwrap_or_default();
-    if !spec.sw.is_empty() && spec.sw.as_str() != tpl_switch {
-        let ds = inv.datastore(&spec.ds).map(|d| d.path.clone()).unwrap_or_else(|| "/zroot/vm".into());
-        v.push(Op::SetSwitch { name: name.clone(), conf: format!("{ds}/{name}/{name}.conf").into(), switch: spec.sw.to_string() });
-    }
-    if spec.autostart {
-        v.push(Op::Autostart { name: name.clone(), on: true });
-    }
-    if spec.install && !spec.iso.is_empty() {
-        // Pass a full path for ISOs outside the datastore's .iso folder (vm install accepts both).
-        let iso = inv
-            .isos
-            .iter()
-            .find(|i| i.name == spec.iso.as_str())
-            .map(|i| if i.source == "datastore" { i.name.clone() } else { i.path.display().to_string() })
-            .unwrap_or_else(|| spec.iso.to_string());
-        v.push(Op::Install { name, iso });
-    }
-    v
 }
 
 fn open_console(ui: &MainWindow, st: &Shared, name: &str) {
