@@ -113,8 +113,10 @@ fn status(f: &mut Frame, app: &App, a: Rect) {
                 Privilege::Sudo => "sudo",
                 Privilege::None => "read-only",
             };
+            // Privilege first: the key hints can squeeze the tail off narrow terminals.
             format!(
-                " {} · {} · vm {} · {} guests · {}/{} vCPU · {}/{} · {} · list {}ms",
+                " {} · {} · {} · {} · {} guests · {}/{} vCPU · {}/{} · list {}ms",
+                priv_,
                 inv.host.hostname,
                 inv.host.os,
                 inv.host.vm_version,
@@ -123,7 +125,6 @@ fn status(f: &mut Frame, app: &App, a: Rect) {
                 inv.host.threads,
                 fmt_mib(m),
                 fmt_mib(inv.host.mem_mib),
-                priv_,
                 inv.list_ms
             )
         }
@@ -563,9 +564,9 @@ mod tests {
         h.privilege = Privilege::None;
         let mut app = App::new(vmctl_core::activity::ActivityLog::memory(), false);
         app.on_event(Event::Inventory(Box::new(h.inventory())));
-        let s = render(&app, 160, 30);
+        let s = render(&app, 120, 30);
         assert!(s.contains("READ-ONLY"), "{s}");
-        assert!(s.contains("read-only ·"), "status bar shows privilege\n{s}");
+        assert!(s.lines().any(|l| l.starts_with(" read-only ·")), "status bar leads with privilege\n{s}");
     }
 
     #[test]

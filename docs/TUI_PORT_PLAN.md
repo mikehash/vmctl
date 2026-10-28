@@ -26,3 +26,12 @@ Cuts:
 4. Retire v1 (assistant.rs, actions.rs, backend::VmBackend users) once nothing imports them.
 5. Gates: cargo test (root ws + desktop ws), clippy -D warnings both, `vmctl-tui --demo` render
    check via ratatui TestBackend snapshot tests, live read-only smoke (`--list`) on this host.
+
+Status (2026-10-28): cuts 1-5 done on tui-port.
+- 3d24527 cut 3: tui/src = app.rs (pure state machine → Effects) + view.rs (render) + main.rs
+  (worker loop, --demo/--list/--plan, console suspend/exec/restore). --plan now prints only.
+- 8c6cf4a cut 4: core::assistant + core::actions deleted; backend.rs = ExecResult only;
+  vmbhyve.rs = parse_list only; anyhow/thiserror dropped.
+- cut 5 gates: cargo test root ws (57 core + 21 tui) + desktop ws (3); clippy -D warnings both;
+  TestBackend goldens in tui/tests/snapshots (UPDATE_SNAPSHOTS=1); live read-only --list on
+  this host (4 guests, sudo, exit 0) + PTY launch/view-cycle/quit of the release binary.

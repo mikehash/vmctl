@@ -31,4 +31,4 @@
 │                                                │──────────────────────────────────────────────────────────────────────
 │                                                │ Start  Stop  Restart  Suspend  Power off  Snapshot  Autostart  Consol
 └────────────────────────────────────────────────┘  ⓘ ubuntu-2404 is already running                                    
- zeus-host · FreeBSD 14.3-RELEASE · vm vm-bhyve 1.7.5 · 6 guests ←→ action · ⏎ run · c console · n new · ? help · q quit
+ root · zeus-host · FreeBSD 14.3-RELEASE · vm-bhyve 1.7.5 · 6 gu ←→ action · ⏎ run · c console · n new · ? help · q quit
