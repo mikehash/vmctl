@@ -1,12 +1,11 @@
 //! Assistant v2 — plain English → intent → validated plan of typed [`Op`]s.
 //!
-//! Unlike v1 (`assistant.rs`, still used by the TUI), this plans against the
-//! full [`Inventory`]: it knows guest states, templates, switches, the host's
+//! Plans against the full [`Inventory`]: it knows guest states, templates, switches, the host's
 //! memory and the activity log, so it can skip guests that would fail, quote
 //! the real stderr of the last failure, and fill defaults from the template.
 //!
 //! Nothing here executes anything. Plans are run step-by-step by the caller,
-//! stopping at the first non-zero exit (see [`Plan::run`]).
+//! stopping at the first non-zero exit (see [`run_steps`] and `worker::Job::Run`).
 
 use crate::activity::Entry;
 use crate::backend::ExecResult;

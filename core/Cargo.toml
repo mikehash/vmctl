@@ -2,11 +2,9 @@
 name = "vmctl-core"
 version.workspace = true
 edition.workspace = true
-description = "Shared core for vmctl front-ends: typed vm(8) wrapper, actions, assistant, backend"
+description = "Shared core for vmctl front-ends: inventory, typed ops, recipes, planner, worker, activity log"
 
 [dependencies]
-anyhow.workspace = true
-thiserror.workspace = true
 libc.workspace = true
 
 [dev-dependencies]

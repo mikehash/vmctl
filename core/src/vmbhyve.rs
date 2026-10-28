@@ -1,30 +1,4 @@
-//! Thin, typed wrapper around the `vm(8)` (vm-bhyve) CLI.
-//!
-//! Everything the TUI does goes through this module so that:
-//! - the command surface is in one place (easy to audit / extend),
-//! - parsing is testable without a live hypervisor,
-//! - we never shell out ad-hoc from UI code.
-//!
-//! Design note: `vm list`, `vm info`, `vm switch list` etc. need root to read
-//! `/dev/vmm`. We surface that as a clear error rather than a parse failure.
-
-use std::process::Command;
-
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum VmError {
-    #[error("failed to run `vm`: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("`vm {args}` exited {status}: {stderr}")]
-    Command {
-        args: String,
-        status: i32,
-        stderr: String,
-    },
-    #[error("could not parse `vm {args}` output: {detail}")]
-    Parse { args: String, detail: String },
-}
+//! `vm list` parser (pure). The inventory runs the command; this only reads it.
 
 /// One row of `vm list`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,52 +15,8 @@ pub struct VmSummary {
 
 impl VmSummary {
     /// True when the guest is running (vm-bhyve reports `Running (pid)`).
-    #[allow(dead_code)]
     pub fn is_running(&self) -> bool {
         self.state.starts_with("Running")
-    }
-}
-
-/// Handle to the `vm` binary. `bin` is overridable for tests.
-#[derive(Debug, Clone)]
-pub struct Vm {
-    bin: String,
-}
-
-impl Default for Vm {
-    fn default() -> Self {
-        Self {
-            bin: "vm".to_string(),
-        }
-    }
-}
-
-impl Vm {
-    #[allow(dead_code)]
-    pub fn new(bin: impl Into<String>) -> Self {
-        Self { bin: bin.into() }
-    }
-
-    /// Run `vm <args>` and return stdout, erroring on non-zero exit.
-    pub fn run(&self, args: &[&str]) -> Result<String, VmError> {
-        let out = Command::new(&self.bin).args(args).output()?;
-        if !out.status.success() {
-            return Err(VmError::Command {
-                args: args.join(" "),
-                status: out.status.code().unwrap_or(-1),
-                stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
-            });
-        }
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    }
-
-    /// `vm list` — parse the tabular summary of all guests.
-    pub fn list(&self) -> Result<Vec<VmSummary>, VmError> {
-        let raw = self.run(&["list"])?;
-        parse_list(&raw).ok_or_else(|| VmError::Parse {
-            args: "list".to_string(),
-            detail: "missing or malformed header row".to_string(),
-        })
     }
 }
 
