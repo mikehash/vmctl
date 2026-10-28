@@ -1,0 +1,34 @@
+ vmctl   1 Machines  2 Snapshots  3 Network  4 Storage  5 Activity  6 Ask vmctl                                         
+ DEMO HOST — nothing here touches vm-bhyve. Run without --demo for the real host.                                       
+┌ Machines (6) ──────────────────────────────────┐┌ Details ───────────────────────────────────────────────────────────┐
+│STATE        NAME              CPU  MEM         ││win11-dev  ○ Stopped  Stopped                                       │
+│● Running    ubuntu-2404       2c   4G          ││loader     uefi                                                     │
+│● Running    freebsd-build     8c   16G         ││cpu / mem  4 vCPU · 8G                                              │
+│● Running    openbsd-fw        1c   1G          ││datastore  fast · /zroot/vm/win11-dev                               │
+│○ Stopped    win11-dev         4c   8G          ││console    vnc 0.0.0.0:5901                                         │
+│◐ Suspended  debian-ci         2c   2G          ││autostart  no                                                       │
+│⚿ Locked     alpine-test       1c   512M        ││nic0       e1000 → nat0 · 58:9c:fc:00:4a:19                         │
+│                                                ││disk0      virtio-blk /zroot/vm/win11-dev/disk0.img · 64.000G (used │
+│                                                ││19.840G)                                                            │
+│                       ┌ Confirm ─────────────────────────────────────────────────────────────┐                       │
+│                       │Destroy win11-dev? Its disks and every snapshot are deleted for good. │                       │
+│                       │                                                                      │ with 4 vCPU and 8G    │
+│                       │Will run:                                                             │                       │
+│                       │  $ vm destroy -f win11-dev                                           │                       │
+│                       │                                                                      │                       │
+│                       │ y  confirm    n  cancel                                              │                       │
+│                       │                                                                      │                       │
+│                       │                                                                      │                       │
+│                       └──────────────────────────────────────────────────────────────────────┘                       │
+│                                                ││  win11-dev:  [memory: 8G]                                          │
+│                                                ││                                                                    │
+│                                                ││                                                                    │
+│                                                ││                                                                    │
+│                                                ││                                                                    │
+│                                                ││                                                                    │
+│                                                ││                                                                    │
+│                                                │└────────────────────────────────────────────────────────────────────┘
+│                                                │──────────────────────────────────────────────────────────────────────
+│                                                │ Start  Stop  Restart  Suspend  Power off  Snapshot  Autostart  Consol
+└────────────────────────────────────────────────┘                                                                      
+ zeus-host · FreeBSD 14.3-RELEASE · vm vm-bhyve 1.7.5 · 6 guests ←→ action · ⏎ run · c console · n new · ? help · q quit

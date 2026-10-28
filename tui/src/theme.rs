@@ -8,7 +8,9 @@ use ratatui::style::{Color, Modifier, Style};
 
 // ── Surfaces ────────────────────────────────────────────────────────────────
 pub const BG: Color = Color::Rgb(0x0A, 0x0B, 0x0D); // #0A0B0D app background
+#[allow(dead_code)] // full token set mirrors desktop/ui/vmctl.slint
 pub const PANEL: Color = Color::Rgb(0x0F, 0x11, 0x14); // #0F1114 panel
+#[allow(dead_code)]
 pub const SURFACE: Color = Color::Rgb(0x14, 0x17, 0x1B); // #14171B
 pub const RAISED: Color = Color::Rgb(0x1A, 0x1E, 0x23); // #1A1E23
 pub const LINE: Color = Color::Rgb(0x1E, 0x22, 0x28); // #1E2228 borders
@@ -32,11 +34,6 @@ pub const VIOLET: Color = Color::Rgb(0xB7, 0x9C, 0xFF); // #B79CFF suspended
 /// App background fill.
 pub fn bg() -> Style {
     Style::default().bg(BG)
-}
-
-/// Panel background with a dim border.
-pub fn panel() -> Style {
-    Style::default().bg(PANEL).fg(SUB)
 }
 
 /// Primary text on the app background.
@@ -64,29 +61,14 @@ pub fn focus() -> Style {
     Style::default().fg(EMBER).bg(BG).add_modifier(Modifier::BOLD)
 }
 
-/// Primary action (crimson) — the "do it" color.
-pub fn action() -> Style {
-    Style::default().fg(CRIMSON).bg(BG).add_modifier(Modifier::BOLD)
-}
-
 /// Ember action (assistant / secondary emphasis).
 pub fn ember() -> Style {
     Style::default().fg(EMBER).bg(BG).add_modifier(Modifier::BOLD)
 }
 
-/// Success / running.
-pub fn ok() -> Style {
-    Style::default().fg(GREEN).bg(BG)
-}
-
 /// Warning.
 pub fn warn() -> Style {
     Style::default().fg(AMBER).bg(BG)
-}
-
-/// Suspended / special state.
-pub fn special() -> Style {
-    Style::default().fg(VIOLET).bg(BG)
 }
 
 /// Selection bar — ember-tinted highlight, matching the prototype's active row.
@@ -128,6 +110,5 @@ mod tests {
     #[test]
     fn focus_and_action_styles() {
         assert_eq!(focus().fg, Some(EMBER));
-        assert_eq!(action().fg, Some(CRIMSON));
     }
 }

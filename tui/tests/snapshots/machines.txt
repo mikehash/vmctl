@@ -1,0 +1,34 @@
+ vmctl   1 Machines  2 Snapshots  3 Network  4 Storage  5 Activity  6 Ask vmctl                                         
+ DEMO HOST — nothing here touches vm-bhyve. Run without --demo for the real host.                                       
+┌ Machines (6) ──────────────────────────────────┐┌ Details ───────────────────────────────────────────────────────────┐
+│STATE        NAME              CPU  MEM         ││ubuntu-2404  ● Running  Running (4182)                              │
+│● Running    ubuntu-2404       2c   4G          ││loader     uefi                                                     │
+│● Running    freebsd-build     8c   16G         ││cpu / mem  2 vCPU · 4G                                              │
+│● Running    openbsd-fw        1c   1G          ││datastore  default · /zroot/vm/ubuntu-2404                          │
+│○ Stopped    win11-dev         4c   8G          ││console    com1 /dev/nmdm-ubuntu-2404.1B                            │
+│◐ Suspended  debian-ci         2c   2G          ││autostart  no                                                       │
+│⚿ Locked     alpine-test       1c   512M        ││nic0       virtio-net → public · 58:9c:fc:00:4a:11                  │
+│                                                ││disk0      virtio-blk /zroot/vm/ubuntu-2404/disk0.img · 20.000G     │
+│                                                ││(used 6.200G)                                                       │
+│                                                ││snapshots  fresh-install, pre-upgrade                               │
+│                                                ││                                                                    │
+│                                                ││▸ ubuntu-2404 is up. Next step: open its serial console.            │
+│                                                ││  $ vm console ubuntu-2404                                          │
+│                                                ││                                                                    │
+│                                                ││vm-bhyve.log                                                        │
+│                                                ││  ubuntu-2404: initialising                                         │
+│                                                ││  ubuntu-2404:  [loader: uefi]                                      │
+│                                                ││  ubuntu-2404:  [cpu: 2]                                            │
+│                                                ││  ubuntu-2404:  [memory: 4G]                                        │
+│                                                ││                                                                    │
+│                                                ││                                                                    │
+│                                                ││                                                                    │
+│                                                ││                                                                    │
+│                                                ││                                                                    │
+│                                                ││                                                                    │
+│                                                ││                                                                    │
+│                                                │└────────────────────────────────────────────────────────────────────┘
+│                                                │──────────────────────────────────────────────────────────────────────
+│                                                │ Start  Stop  Restart  Suspend  Power off  Snapshot  Autostart  Consol
+└────────────────────────────────────────────────┘  ⓘ ubuntu-2404 is already running                                    
+ zeus-host · FreeBSD 14.3-RELEASE · vm vm-bhyve 1.7.5 · 6 guests ←→ action · ⏎ run · c console · n new · ? help · q quit
