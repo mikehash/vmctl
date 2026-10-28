@@ -21,6 +21,7 @@ pub mod ops;
 pub mod planner;
 pub mod recipes;
 pub mod templates;
+pub mod worker;
 pub mod vmbhyve;
 
 pub use actions::{suggested_action, Action};

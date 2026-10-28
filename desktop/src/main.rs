@@ -2,7 +2,7 @@
 //!
 //! Layout of this crate:
 //! - `ui/*.slint`   — the window (pure view; all state in the `App` global)
-//! - `worker.rs`    — background thread that owns the hypervisor (N-103)
+//! - worker         — vmctl_core::worker, background thread owning the hypervisor (N-103)
 //! - `console.rs`   — embedded nmdm serial console
 //! - `main.rs`      — the controller: core state → UI models, UI callbacks → ops
 //!
@@ -12,7 +12,6 @@
 slint::include_modules!();
 
 mod console;
-mod worker;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -28,7 +27,7 @@ use vmctl_core::ops::{suggest, Op};
 use vmctl_core::planner::{self, Reply};
 use vmctl_core::recipes;
 
-use worker::{Event, Tag, Worker};
+use vmctl_core::worker::{Event, Tag, Worker};
 
 const SOURCE: &str = "desktop";
 
